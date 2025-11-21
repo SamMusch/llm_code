@@ -93,7 +93,7 @@ def _load_documents(input_dir: Path) -> list:
     return docs
 
 
-def build_index(docs_dir: Path | None = None) -> None:
+def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> None:
     """load → chunk → embed → store"""
     docs_dir = Path(docs_dir) if docs_dir else cfg.docs_dir
 
@@ -101,6 +101,16 @@ def build_index(docs_dir: Path | None = None) -> None:
     cfg.faiss_dir.mkdir(parents=True, exist_ok=True)
 
     docs = _load_documents(docs_dir)
+
+    # Optional cap on number of documents to index (to avoid OOM on huge corpora).
+    if max_docs is None:
+        max_docs = getattr(cfg, "max_docs", None)
+
+    if max_docs is not None and len(docs) > max_docs:
+        print(
+            f"[index-warning] Corpus has {len(docs)} docs; truncating to {max_docs} for indexing.")
+        docs = docs[:max_docs]
+
     if not docs:
         raise RuntimeError(
             f"No documents found in {docs_dir}. "
@@ -125,19 +135,20 @@ def load_retriever(k: int | None = None):
     """
     k = k or cfg.k  # top k docs
 
-    # Guardrails: fail fast with a clear message if the index is missing or incomplete.
-    if not cfg.faiss_dir.exists():
-        raise RuntimeError(
-            f"FAISS index directory not found at {cfg.faiss_dir}. "
-            "Build it first with: `python -m rag.cli index`."
-        )
-
     index_file = cfg.faiss_dir / "index.faiss"
-    if not index_file.exists():
-        raise RuntimeError(
-            f"FAISS index file not found at {index_file}. "
-            "Build or rebuild it with: `python -m rag.cli index`."
-        )
+
+    # Guardrails: fail fast or optionally rebuild if the index is missing.
+    if not cfg.faiss_dir.exists() or not index_file.exists():
+        auto_rebuild = getattr(cfg, "auto_rebuild_index", False)
+        if auto_rebuild:
+            print(
+                f"[retriever] Index not found in {cfg.faiss_dir}. Auto-rebuilding with build_index()...")
+            build_index()  # uses cfg.docs_dir and optional cfg.max_docs
+        else:
+            raise RuntimeError(
+                f"FAISS index not found at {index_file}. "
+                "Build it first with: `python -m rag.cli index`."
+            )
 
     embeddings = HuggingFaceEmbeddings(model_name=cfg.embedding_model)
     try:
@@ -146,6 +157,13 @@ def load_retriever(k: int | None = None):
             embeddings,
             allow_dangerous_deserialization=True,
         )
+        # Empty-index guard: make sure we actually have vectors.
+        faiss_index = getattr(vs, "index", None)
+        if faiss_index is None or getattr(faiss_index, "ntotal", 0) == 0:
+            raise RuntimeError(
+                f"FAISS index at {cfg.faiss_dir} is empty (0 vectors). "
+                "Check docs_dir or rebuild the index in full mode."
+            )
     except Exception as e:
         raise RuntimeError(
             f"Failed to load FAISS index from {cfg.faiss_dir}. "

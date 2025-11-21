@@ -72,11 +72,13 @@ def _fallback(state: RAGState, cfg: Settings) -> RAGState:
 
 def build_graph(cfg: Settings | None = None):
     cfg = cfg or Settings.load()
+    retriever = load_retriever(k=cfg.k)
 
     g = StateGraph(RAGState)
 
     def retrieve_with_cfg(state: RAGState) -> RAGState:
-        return _retrieve(state, cfg)
+        docs = retriever.invoke(state["question"])
+        return {**state, "docs": docs}
 
     def generate_with_cfg(state: RAGState) -> RAGState:
         return _generate(state, cfg)
