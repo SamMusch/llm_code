@@ -1,7 +1,9 @@
 from typing import List, Tuple, TypedDict
+
 from langgraph.graph import StateGraph, END
 from tenacity import retry, wait_exponential_jitter, stop_after_attempt
 from langchain_core.documents import Document
+
 from .config import Settings
 from .retriever import load_retriever
 from .generator import answer as llm_answer
@@ -13,30 +15,31 @@ try:
 except Exception:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
+
 class RAGState(TypedDict, total=False):
     question: str
-    cfg: dict
     docs: List[Document]
     answer: str
     tried_alt: bool
 
-def _retrieve(state: RAGState) -> RAGState:
-    cfg = Settings(**state["cfg"])
-    retriever = load_retriever(cfg)
+
+def _retrieve(state: RAGState, cfg: Settings) -> RAGState:
+    retriever = load_retriever(k=cfg.k)
     docs = retriever.invoke(state["question"])
     return {**state, "docs": docs}
+
 
 @retry(wait=wait_exponential_jitter(0.5, 2.0), stop=stop_after_attempt(3))
 def _generate_with_retry(question: str, docs: List[Document], cfg: Settings) -> str:
     return llm_answer(question, docs, cfg)
 
-def _generate(state: RAGState) -> RAGState:
-    cfg = Settings(**state["cfg"])
+
+def _generate(state: RAGState, cfg: Settings) -> RAGState:
     ans = _generate_with_retry(state["question"], state.get("docs", []), cfg)
     return {**state, "answer": ans}
 
-def _guard_or_route(state: RAGState):
-    cfg = Settings(**state["cfg"])
+
+def _guard_or_route(state: RAGState, cfg: Settings):
     if not cfg.hallucination_guard:
         return "ok"
 
@@ -53,9 +56,9 @@ def _guard_or_route(state: RAGState):
         return "fallback"
     return "ok"
 
-def _fallback(state: RAGState) -> RAGState:
+
+def _fallback(state: RAGState, cfg: Settings) -> RAGState:
     # Simple tool hop: try to fetch a specifically named doc by keyword
-    cfg = Settings(**state["cfg"])
     q = state["question"]
     snippet = READ_DOC_TOOL.invoke({"name": q, "cfg": cfg.model_dump()})
     if snippet:
@@ -66,20 +69,37 @@ def _fallback(state: RAGState) -> RAGState:
     # If tool fails, return an abstention
     return {**state, "answer": "I don't know.", "tried_alt": True}
 
-def build_graph():
+
+def build_graph(cfg: Settings | None = None):
+    cfg = cfg or Settings.load()
+
     g = StateGraph(RAGState)
-    g.add_node("retrieve", _retrieve)
-    g.add_node("generate", _generate)
-    g.add_node("fallback", _fallback)
+
+    def retrieve_with_cfg(state: RAGState) -> RAGState:
+        return _retrieve(state, cfg)
+
+    def generate_with_cfg(state: RAGState) -> RAGState:
+        return _generate(state, cfg)
+
+    def fallback_with_cfg(state: RAGState) -> RAGState:
+        return _fallback(state, cfg)
+
+    def guard_with_cfg(state: RAGState):
+        return _guard_or_route(state, cfg)
+
+    g.add_node("retrieve", retrieve_with_cfg)
+    g.add_node("generate", generate_with_cfg)
+    g.add_node("fallback", fallback_with_cfg)
 
     g.set_entry_point("retrieve")
     g.add_edge("retrieve", "generate")
-    g.add_conditional_edges("generate", _guard_or_route, {"ok": END, "fallback": "fallback"})
+    g.add_conditional_edges("generate", guard_with_cfg, {"ok": END, "fallback": "fallback"})
     g.add_edge("fallback", END)
     return g.compile()
 
+
 def run(question: str, cfg: Settings | None = None) -> Tuple[str, List[Document]]:
-    _cfg = (cfg or Settings.load()).model_dump()
-    app = build_graph()
-    final = app.invoke({"question": question, "cfg": _cfg})
+    _cfg = cfg or Settings.load()
+    app = build_graph(_cfg)
+    final = app.invoke({"question": question})
     return final.get("answer", ""), final.get("docs", [])

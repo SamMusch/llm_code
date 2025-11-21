@@ -1,0 +1,26 @@
+# config/rag.yaml
+# Purpose:
+  # gives full declarative control outside Python code
+  # makes your pipeline reproducible
+  # required for LRAT-style features, multi-environment runs, or toggling paths/settings without editing code.
+
+rag:
+  paths:
+    docs_dir: "Data/docs"
+    index_dir: "Data/index"
+    logs_dir: "Data/logs"
+
+  llm:
+    provider: "openai"
+    model: "gpt-4o-mini"
+
+  embedding:
+    model: "sentence-transformers/all-mpnet-base-v2"
+    chunk_size: 1200
+    chunk_overlap: 200
+    top_k: 4
+
+  runtime:
+    max_retries: 3
+    hallucination_guard: true
+    max_context_chars: 60000
