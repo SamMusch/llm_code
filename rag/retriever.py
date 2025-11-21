@@ -54,6 +54,9 @@ def _load_documents(input_dir: Path) -> list:
         raise FileNotFoundError(f"Docs dir not found: {input_dir}")
 
     docs: list = []
+    loaded_count = 0
+    dropped_count = 0
+    error_count = 0
     for ext, Loader in EXT_TO_LOADER.items():
         loader = DirectoryLoader(
             str(input_dir),
@@ -63,11 +66,30 @@ def _load_documents(input_dir: Path) -> list:
         )
         try:
             loaded = loader.load()
+            loaded_count += len(loaded)
             docs.extend(loaded)
+            # Drop empty documents (no text extracted)
+            for d in list(docs):
+                if not getattr(d, "page_content", "").strip():
+                    docs.remove(d)
+                    dropped_count += 1
+                    print(f"[loader-warning] Dropped empty document: {getattr(d, 'metadata', {}).get('source', 'unknown')}")
         except Exception as e:
-            print(f"[loader-error] Failed to load files with extension {ext}: {e}")
+            # Detect common Unstructured dependency errors
+            msg = str(e).lower()
+            if "unstructured" in msg and ("dependency" in msg or "import" in msg or "missing" in msg):
+                print(
+                    f"[loader-error] Unstructured dependency missing for {ext}. "
+                    f"Install with: pip install 'unstructured[all-docs]'"
+                )
+            else:
+                print(f"[loader-error] Failed to load files with extension {ext}: {e}")
+            error_count += 1
             continue
 
+    print(
+        f"[loader-summary] Loaded: {loaded_count}, Dropped empty: {dropped_count}, Errors: {error_count}"
+    )
     return docs
 
 
