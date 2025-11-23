@@ -1,41 +1,32 @@
-"""
-config.py
-
-class Settings(BaseModel) ---> defines a data model using Pydantic.
-- validates data types / provides default values / allows serialization
-- class attributes becomes fields w validation & metadata.
-
-def load() ---> builds a Settings instance
-"""
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pathlib import Path
 import os, yaml
 
 class Settings(BaseModel):
     # paths
-    data_dir: Path = Field(default=Path("Data"))
-    docs_dir: Path = Field(default=Path("Data/docs"))               # docs_dir
-    faiss_dir: Path = Field(default=Path("Data/faiss_index"))
-    
+    data_dir: Path
+    docs_dir: Path      # directory for documents
+    faiss_dir: Path     # directory for FAISS index
+    logs_dir: Path      # directory for logs
+
     # llm
-    llm_provider: str = Field(default="openai")
-    llm_model: str = Field(default="gpt-4o-mini")                   # LLM model
-    
+    llm_provider: str
+    llm_model: str  # LLM model
+
     # embedding
-    k: int = Field(default=4)  # top k docs
-    chunk_size: int = Field(default=1200)
-    chunk_overlap: int = Field(default=200)
-    embedding_model: str = Field(default="sentence-transformers/all-mpnet-base-v2")  # embed model from env (huggingface)
+    k: int                  # top k docs
+    chunk_size: int
+    chunk_overlap: int
+    embedding_model: str    # embed model from env (e.g., HuggingFace model name)
 
     # system runtime settings
-    max_retries: int = Field(default=3)
-    hallucination_guard: bool = Field(default=True)     # graph.py
-    max_context_chars: int = Field(default=60_000)      # graph.py
+    max_retries: int
+    hallucination_guard: bool
+    max_context_chars: int
 
     @classmethod
     def load(cls):
-        # 1. Load YAML first
+        # 1. Load YAML configuration first
         yaml_path = Path(__file__).resolve().parents[1] / "config" / "rag.yaml"
         yaml_data = {}
         if yaml_path.exists():
@@ -43,56 +34,52 @@ class Settings(BaseModel):
                 raw = yaml.safe_load(f) or {}
                 yaml_data = raw.get("rag", {})
 
-        # Map YAML → env dict
-        env = {}
-        paths = yaml_data.get("paths", {})
-        if "docs_dir" in paths:
-            env["docs_dir"] = Path(paths["docs_dir"])
-        if "data_dir" in paths:
-            env["data_dir"] = Path(paths["data_dir"])
-        if "index_dir" in paths:
-            env["faiss_dir"] = Path(paths["index_dir"])
+        env = {}    # Map YAML → env dict
+        unified_mapping = {
+            "paths.docs_dir":      ("docs_dir", Path),      # paths
+            "paths.data_dir":      ("data_dir", Path),
+            "paths.index_dir":     ("faiss_dir", Path),
+            "paths.logs_dir":      ("logs_dir", Path),
 
-        llm = yaml_data.get("llm", {})
-        if "provider" in llm:
-            env["llm_provider"] = llm["provider"]
-        if "model" in llm:
-            env["llm_model"] = llm["model"]
+            "llm.provider":        ("llm_provider", None),  # llm
+            "llm.model":           ("llm_model", None),
+            
+            "embedding.model":        ("embedding_model", None),  # embedding
+            "embedding.chunk_size":   ("chunk_size", None),
+            "embedding.chunk_overlap":("chunk_overlap", None),
+            "embedding.top_k":        ("k", None),
 
-        embedding = yaml_data.get("embedding", {})
-        if "model" in embedding:
-            env["embedding_model"] = embedding["model"]
-        if "chunk_size" in embedding:
-            env["chunk_size"] = embedding["chunk_size"]
-        if "chunk_overlap" in embedding:
-            env["chunk_overlap"] = embedding["chunk_overlap"]
-        if "top_k" in embedding:
-            env["k"] = embedding["top_k"]
+            "runtime.max_retries":      ("max_retries", None),      # runtime
+            "runtime.hallucination_guard": ("hallucination_guard", None),
+            "runtime.max_context_chars":   ("max_context_chars", None),}
+        for dotted_key, (env_key, cast) in unified_mapping.items():
+            section, key = dotted_key.split(".")
+            section_data = yaml_data.get(section, {})
+            if key in section_data:
+                value = section_data[key]
+                env[env_key] = cast(value) if cast else value
 
-        runtime = yaml_data.get("runtime", {})
-        if "max_retries" in runtime:
-            env["max_retries"] = runtime["max_retries"]
-        if "hallucination_guard" in runtime:
-            env["hallucination_guard"] = runtime["hallucination_guard"]
-        if "max_context_chars" in runtime:
-            env["max_context_chars"] = runtime["max_context_chars"]
+        env_override_mapping = {
+            "DATA_DIR":        ("data_dir", Path),
+            "DOCS_DIR":        ("docs_dir", Path),
+            "INDEX_DIR":       ("faiss_dir", Path),
+            "LOGS_DIR":        ("logs_dir", Path),
+            "LLM_PROVIDER":    ("llm_provider", str),
+            "LLM_MODEL":       ("llm_model", str),
+            "K":               ("k", int),
+            "EMBEDDING_MODEL": ("embedding_model", str),}
+        for env_var, (env_key, cast) in env_override_mapping.items():
+            if env_var in os.environ:
+                raw_value = os.environ[env_var]
+                env[env_key] = cast(raw_value)
 
-        if "DATA_DIR" in os.environ: env["data_dir"] = Path(os.environ["DATA_DIR"])
-        if "DOCS_DIR" in os.environ: env["docs_dir"] = Path(os.environ["DOCS_DIR"])                 # docs_dir
-        if "INDEX_DIR" in os.environ: env["faiss_dir"] = Path(os.environ["INDEX_DIR"])
-        if "LLM_PROVIDER" in os.environ: env["llm_provider"] = os.environ["LLM_PROVIDER"]
-        if "LLM_MODEL" in os.environ: env["llm_model"] = os.environ["LLM_MODEL"]
-        if "K" in os.environ: env["k"] = int(os.environ["K"])
-        if "EMBEDDING_MODEL" in os.environ: env["embedding_model"] = os.environ["EMBEDDING_MODEL"]
         return cls(**env)
-    
 
-
+# Singleton config instance for convenient import
+# Return a singleton Settings instance loaded from rag.yaml + env vars
 from functools import lru_cache
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    Return a singleton Settings instance loaded from rag.yaml + env vars.
-    """
     return Settings.load()
-cfg = get_settings()       # Canonical config object for convenience imports
+
+cfg = get_settings()

@@ -12,7 +12,11 @@ os.environ.setdefault("USER_AGENT", "rag-app/0.1 (+local)")
 ROOT = Path(__file__).resolve().parents[1]       # load .env once for the whole package
 load_dotenv(ROOT / ".env")
 
-# Observability bootstrap
+
+
+# ----------------------------------------
+# OBSERVABILIITY bootstrap
+# Extract metadata from each step
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_JSON = os.environ.get("LOG_JSON", "false").lower() == "true"
 if LOG_JSON:

@@ -1,35 +1,42 @@
-```
-your-project/
-├─ RAG.py              <-- MAIN SCRIPT
+
+
+**Conceptual notes**: https://sammusch.github.io/ds-garden/LLM/00-RAG/
+
+- Initial code based on [textbook](https://learning.oreilly.com/library/view/a-simple-guide/9781633435858/OEBPS/Text/part-1.html) & [github code](https://github.com/abhinav-kimothi/A-Simple-Guide-to-RAG)
+
+- Refactored to adopt [LRAT’s](https://github.com/langchain-ai/retrieval-agent-template) modular design, class hierarchy, and graph-based architecture.
+
+
+
+```bash
+llm_code/
+├─ RAG.py                     # wrapper, fwds to real entrypoint
 ├─ rag/
-│  ├─ __init__.py
-│  ├─ indexing.py
-│  ├─ generation.py
-│  ├─ evals.py
-│  ├─ advanced.py
-│  ├─ types.py
-│  └─ utils.py
+│  ├─ __init__.py			  			# Marks dir as a package
+│  ├─ config.py               # Pydantic settings (.env, yaml config)
+│  ├─ retriever.py            # i_pipe
+│  ├─ generator.py            # g_pipe
+│  ├─ graph.py                # i_pipe & g_pipe
+│  ├─ cli.py                  # command line interface
+│  └─ utils.py                # helpers (clean_text, timers)
 ├─ config/
-│  └─ rag.yaml
-├─ Data/                 <-- put vector DB artifacts here (indexes, parquet, faiss, chroma, etc.)
+│  └─ rag.yaml                # settings
+├─ Data/                      # vector DB artifacts
 ├─ .env
-├─ requirements.txt
-└─ README.md
+└─ requirements.txt
 ```
 
-- `RAG.py`: a thin **orchestrator** that imports & wires functions.
-- `rag/`: a small **internal package**.
 
 
+```bash
+# llm_code/.env
 
----
+# assuming you name this folder "llm_code"
 
+OPENAI_API_KEY=sk-proj..
+HUGGINGFACEHUB_API_TOKEN=hf_...
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=llm_code  # FOLDER NAME
+```
 
-
-Use absolute imports, keep functions pure, centralize config, add logging, and avoid any packaging you don’t need. Run it like a normal script.
-
-Why this structure?
-
-- **Importable modules** without making a public library.
-- **Stable internal “API”:** `RAG.py` stays project-specific, other py scripts are building blocks
-- **Future-proof:** can make a CLI or package without rewrites.
