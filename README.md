@@ -40,3 +40,12 @@ LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=llm_code  # FOLDER NAME
 ```
 
+
+
+```bash
+cd ... path/to/folder
+source .venv/bin/activate
+python -m rag.cli index
+python -m rag.cli ask "Example question?"
+```
+
