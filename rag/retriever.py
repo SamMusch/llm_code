@@ -1,6 +1,11 @@
 """
 retriever.py
 Indexing and retrieval utilities for the RAG pipeline.
+
+retriever.py is now:
+	•	a vector store / retriever module, and
+	•	a tool provider for the agent.
+
 """
 
 from pathlib import Path
@@ -15,6 +20,7 @@ from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.document_loaders.excel import UnstructuredExcelLoader
 from langchain_community.document_loaders.email import (UnstructuredEmailLoader,OutlookMessageLoader,)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.tools import tool
 
 # Simple loader registry by extension
 EXT_TO_LOADER = {
@@ -164,3 +170,36 @@ def load_retriever(k: int | None = None):
     print(f"[retriever] Loaded index from {cfg.faiss_dir} (k={k})")
 
     return vs.as_retriever(search_kwargs={"k": k})
+
+
+# === Tool functions ===
+@tool
+def search_docs(query: str, k: int | None = None) -> str:
+    """
+    Semantic search over FAISS index; returns top-k doc content.
+    Use this to look up information in the local KB.
+    """
+    retriever = load_retriever(k=k)
+    docs = retriever.invoke(query)
+    if not docs:
+        return "No relevant documents found."
+    results: list[str] = []
+    for i, d in enumerate(docs, start=1):
+        meta = getattr(d, "metadata", {}) or {}
+        source = meta.get("source", "unknown")
+        results.append(f"[{i}] Source: {source}\n{d.page_content}")
+    return "\n\n".join(results)
+
+
+@tool
+def rebuild_index(max_docs: int | None = None) -> str:
+    """
+    Rebuild the FAISS index over cfg.docs_dir.
+    Use if index is missing or out-of-date.
+    """
+    build_index(docs_dir=None, max_docs=max_docs)
+    return (
+        f"Index rebuilt in {cfg.faiss_dir} "
+        f"from docs in {cfg.docs_dir} "
+        f"(max_docs={max_docs})."
+    )

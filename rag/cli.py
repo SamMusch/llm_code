@@ -1,5 +1,8 @@
 
-# cli.py defines 2 functions:
+# cli.py 
+# a Typer wrapper that calls into other modules
+# 
+# defines 2 functions:
     # index()   Runs I pipeline
     # ask()     Runs G pipeline
 
