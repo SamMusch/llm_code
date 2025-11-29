@@ -1,4 +1,3 @@
-
 # cli.py 
 # a Typer wrapper that calls into other modules
 # 
@@ -12,7 +11,7 @@ from pathlib import Path
 # Importing from other scripts
 from rag.config import cfg as base_cfg    # project settings
 from rag.retriever import build_index     # load → chunk → embed → store
-from rag.graph import run as run_graph    # executes LangGraph pipeline
+from rag.agent import get_agent          # LangChain agent over tools
 
 app = typer.Typer(
     no_args_is_help = True,           # ensures we provide arguments
@@ -47,25 +46,31 @@ def index(path: str = typer.Option(None, help="Docs dir; default from config")):
     # Take Q → run RAG pipeline → return answer & sources
 
 @app.command()
-def ask(question: str, k: int = typer.Option(None, help="Top-k docs")):
+def ask(question: str, k: int = typer.Option(None, help="Top-k docs (currently not wired)")):
     cfg = base_cfg
     if k is not None:
+        # k is retained for future wiring; agent currently uses its own defaults.
         cfg = cfg.model_copy(update={"k": k})
 
-    # run RAG pipeline
+    # build agent and run agentic RAG
     try:
-        ans, docs = run_graph(question, cfg)
+        agent = get_agent(cfg)
+        state = agent.invoke({"messages": [{"role": "user", "content": question}]})
     except RuntimeError as e:
         typer.echo(f"❌ {e}")      # clean, user-facing errors
         raise typer.Exit(code=1)
 
-    # return answer & sources
+    # extract final answer from the last message
+    messages = state.get("messages", [])
+    if not messages:
+        typer.echo("No response from agent.")
+        raise typer.Exit(code=1)
+
+    last_msg = messages[-1]
+    content = getattr(last_msg, "content", None)
+    ans = content if isinstance(content, str) else str(last_msg)
+
     typer.echo(ans)
-    typer.echo("\n---\nSources:")
-    for i, d in enumerate(docs, 1):
-        meta = d.metadata or {}
-        src = meta.get("source", "unknown")
-        typer.echo(f"[{i}] {src}")
 
 # ------------------------------------------------------------
 def main():

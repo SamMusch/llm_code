@@ -5,12 +5,14 @@ tools.py
 """
 
 from pathlib import Path
-from langchain_core.tools import tool
 from .config import Settings
+from langchain.tools import tool
+from .retriever import load_retriever, build_index
+
 
 @tool
 def read_doc_by_name(name: str, cfg: dict | None = None) -> str:
-    """flow: load config ---> scan docs files ---> match filename --> return text of 1st first matching file"""
+    """flow: load config ---> scan docs files ---> match filename --> return text of first matching file"""
     _cfg = Settings.load() if cfg is None else Settings(**cfg)
     root = Path(_cfg.docs_dir)
     candidates = list(root.rglob("*"))
@@ -22,3 +24,36 @@ def read_doc_by_name(name: str, cfg: dict | None = None) -> str:
             except Exception:
                 continue
     return ""
+
+
+@tool
+def search_docs(query: str, k: int | None = None) -> str:
+    """
+    Semantic search over FAISS index; returns top-k doc content.
+    Use this to look up information in the local KB.
+    """
+    retriever = load_retriever(k=k)
+    docs = retriever.invoke(query)
+    if not docs:
+        return "No relevant documents found."
+    results: list[str] = []
+    for i, d in enumerate(docs, start=1):
+        meta = getattr(d, "metadata", {}) or {}
+        source = meta.get("source", "unknown")
+        results.append(f"[{i}] Source: {source}\n{d.page_content}")
+    return "\n\n".join(results)
+
+
+@tool
+def rebuild_index(max_docs: int | None = None) -> str:
+    """
+    Rebuild the FAISS index over the configured docs_dir.
+    Use if index is missing or out-of-date.
+    """
+    cfg = Settings.load()
+    build_index(docs_dir=cfg.docs_dir, max_docs=max_docs)
+    return (
+        f"Index rebuilt in {cfg.faiss_dir} "
+        f"from docs in {cfg.docs_dir} "
+        f"(max_docs={max_docs})."
+    )

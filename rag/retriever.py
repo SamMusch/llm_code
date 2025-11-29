@@ -14,13 +14,12 @@ import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from rag.config import cfg
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import (DirectoryLoader,TextLoader,UnstructuredFileLoader)
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.document_loaders.excel import UnstructuredExcelLoader
 from langchain_community.document_loaders.email import (UnstructuredEmailLoader,OutlookMessageLoader,)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.tools import tool
 
 # Simple loader registry by extension
 EXT_TO_LOADER = {
@@ -120,7 +119,7 @@ def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> No
     )
     chunks = splitter.split_documents(docs)
 
-    embeddings = HuggingFaceEmbeddings(model_name=cfg.embedding_model)
+    embeddings = OpenAIEmbeddings(model=cfg.embedding_model)
     vs = FAISS.from_documents(chunks, embeddings)  # FAISS for now
     vs.save_local(str(cfg.faiss_dir))
 
@@ -147,7 +146,7 @@ def load_retriever(k: int | None = None):
                 "Build it first with: `python -m rag.cli index`."
             )
 
-    embeddings = HuggingFaceEmbeddings(model_name=cfg.embedding_model)
+    embeddings = OpenAIEmbeddings(model=cfg.embedding_model)
     try:
         vs = FAISS.load_local(
             str(cfg.faiss_dir),
@@ -171,35 +170,3 @@ def load_retriever(k: int | None = None):
 
     return vs.as_retriever(search_kwargs={"k": k})
 
-
-# === Tool functions ===
-@tool
-def search_docs(query: str, k: int | None = None) -> str:
-    """
-    Semantic search over FAISS index; returns top-k doc content.
-    Use this to look up information in the local KB.
-    """
-    retriever = load_retriever(k=k)
-    docs = retriever.invoke(query)
-    if not docs:
-        return "No relevant documents found."
-    results: list[str] = []
-    for i, d in enumerate(docs, start=1):
-        meta = getattr(d, "metadata", {}) or {}
-        source = meta.get("source", "unknown")
-        results.append(f"[{i}] Source: {source}\n{d.page_content}")
-    return "\n\n".join(results)
-
-
-@tool
-def rebuild_index(max_docs: int | None = None) -> str:
-    """
-    Rebuild the FAISS index over cfg.docs_dir.
-    Use if index is missing or out-of-date.
-    """
-    build_index(docs_dir=None, max_docs=max_docs)
-    return (
-        f"Index rebuilt in {cfg.faiss_dir} "
-        f"from docs in {cfg.docs_dir} "
-        f"(max_docs={max_docs})."
-    )

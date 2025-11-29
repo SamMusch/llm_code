@@ -16,7 +16,7 @@ rag:
     model: "gpt-4o-mini"
 
   embedding:
-    model: "sentence-transformers/all-mpnet-base-v2"
+    model: "text-embedding-3-small"
     chunk_size: 1200
     chunk_overlap: 200
     top_k: 4
