@@ -5,24 +5,15 @@ Indexing and retrieval utilities for the RAG pipeline.
 
 from pathlib import Path
 from typing import Iterable
-
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 from rag.config import cfg
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.document_loaders import (
-    DirectoryLoader,
-    TextLoader,
-    UnstructuredFileLoader,
-)
+from langchain_community.document_loaders import (DirectoryLoader,TextLoader,UnstructuredFileLoader)
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.document_loaders.excel import UnstructuredExcelLoader
-from langchain_community.document_loaders.email import (
-    UnstructuredEmailLoader,
-    OutlookMessageLoader,
-)
+from langchain_community.document_loaders.email import (UnstructuredEmailLoader,OutlookMessageLoader,)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Simple loader registry by extension

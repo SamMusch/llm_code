@@ -1,7 +1,7 @@
 """
-config.py
+generator.py
 
-RAG pipeline
+The RAG pipeline.
 """
 
 from typing import Sequence, Tuple
@@ -9,22 +9,28 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from .config import Settings
 
+
+# These 3 functions:
+    # _build_prompt()     creates prompt template.
+    # _llm()              picks LLM client ---> returns the model object
+    # _format_context()   concatenates doc text ---> one string.
+
 def _build_prompt() -> ChatPromptTemplate:
     sys = (
         "You are a precise assistant. Answer using only the provided context. "
         "If unsure, say you don't know.\n\n"
-        "Context:\n{context}"
-    )
+        "Context:\n{context}")
     user = "Question: {question}"
     return ChatPromptTemplate.from_messages([("system", sys), ("user", user)])
+
 
 def _llm(cfg: Settings):
     if cfg.llm_provider == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model=cfg.llm_model, temperature=0)
-    # default: huggingface endpoint
-    from langchain_community.llms import HuggingFaceEndpoint
+    from langchain_community.llms import HuggingFaceEndpoint            # default: huggingface endpoint
     return HuggingFaceEndpoint(repo_id=cfg.llm_model, temperature=0)
+
 
 def _format_context(docs: Sequence[Document]) -> str:
     return "\n\n".join(d.page_content for d in docs)

@@ -1,16 +1,13 @@
 from typing import List, Tuple, TypedDict
-
 from langgraph.graph import StateGraph, END
 from tenacity import retry, wait_exponential_jitter, stop_after_attempt
 from langchain_core.documents import Document
-
 from .config import Settings
 from .retriever import load_retriever
 from .generator import answer as llm_answer
 
-# Prefer LRAT tool implementation when the template repo is present
-try:
-    # LRAT layout: src/retrieval_graph/tools.py
+
+try: # Prefer LRAT tool implementation (src/retrieval_graph/tools.py)
     from retrieval_graph.tools import read_doc_by_name as READ_DOC_TOOL
 except Exception:
     from .tools import read_doc_by_name as READ_DOC_TOOL

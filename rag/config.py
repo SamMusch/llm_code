@@ -1,3 +1,6 @@
+# config.py
+# Loads in settings from config/rag.yaml
+
 from pydantic import BaseModel
 from pathlib import Path
 import os, yaml
