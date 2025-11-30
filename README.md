@@ -27,25 +27,40 @@ llm_code/
 ```
 
 
-
-```bash
-# llm_code/.env
-
-# assuming you name this folder "llm_code"
-
-OPENAI_API_KEY=sk-proj..
-HUGGINGFACEHUB_API_TOKEN=hf_...
-LANGSMITH_API_KEY=lsv2_...
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=llm_code  # FOLDER NAME
-```
+### Install instructions
 
 
 
 ```bash
-cd ... path/to/folder
+cd /path/to/project/llm_code
+brew install python@3.11
+python3.11 --version
+
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m rag.cli index
-python -m rag.cli ask "Example question?"
+python -m pip install --upgrade pip
+
+pip install -r requirements.txt
+
+# optional UI of langsmith instead of cli
+python -m pip install "langgraph-cli[inmem]"
+
+# confirm
+python -c "import rag; print('OK')"
 ```
 
+```bash
+# create `.env`
+OPENAI_API_KEY=sk-proj-...
+LANGCHAIN_API_KEY=lsv2_pt_...
+LANGSMITH_API_KEY=lsv2_pt_...   # same as ^
+LANGCHAIN_TRACING_V2=true
+LANGSMITH_PROJECT=llm_code      # folder name
+```
+
+```
+python -m rag.cli index
+python -m rag.cli ask "test question in cli"
+
+langgrah dev
+```
