@@ -1,0 +1,7 @@
+{
+  "graphs": {
+    "agent": "rag.agent:create_agent"
+  },
+  "env": ".env",
+  "dependencies": ["."]
+}

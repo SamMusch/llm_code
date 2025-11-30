@@ -67,10 +67,11 @@ class Settings(BaseModel):
             "DOCS_DIR":        ("docs_dir", Path),
             "INDEX_DIR":       ("faiss_dir", Path),
             "LOGS_DIR":        ("logs_dir", Path),
-            "LLM_PROVIDER":    ("llm_provider", str),
-            "LLM_MODEL":       ("llm_model", str),
-            "K":               ("k", int),
-            "EMBEDDING_MODEL": ("embedding_model", str),}
+            # "LLM_PROVIDER":    ("llm_provider", str),
+            # "LLM_MODEL":       ("llm_model", str),
+            # "K":               ("k", int),
+            # "EMBEDDING_MODEL": ("embedding_model", str),
+            }
         for env_var, (env_key, cast) in env_override_mapping.items():
             if env_var in os.environ:
                 raw_value = os.environ[env_var]

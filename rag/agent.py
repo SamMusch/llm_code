@@ -1,10 +1,11 @@
 # rag/agent.py
 from __future__ import annotations
 from typing import Any, Dict, List
-from langchain.agents import create_agent
+from langchain.agents import create_agent as _lc_create_agent
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableConfig
 from .config import Settings
 from .tools import search_docs, rebuild_index
 
@@ -49,6 +50,7 @@ class HistoryTrimMiddleware(AgentMiddleware):
         return {"messages": trimmed}
 
 # --- LLM construction --------------------------------------------------------
+
 
 def build_llm(cfg: Settings | None = None):
     """
@@ -100,7 +102,7 @@ def get_agent(cfg: Settings | None = None):
         "Prefer `search_docs` for normal lookups."
     )
 
-    agent = create_agent(
+    agent = _lc_create_agent(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
@@ -125,3 +127,11 @@ def run_agent(question: str, cfg: Settings | None = None) -> str:
     # BaseMessage has .content; fall back to str as a guard
     content = getattr(last, "content", None)
     return content if isinstance(content, str) else str(last)
+
+
+def create_agent(config: RunnableConfig):
+    """LangGraph factory: return the runnable agent for this graph.
+
+    The RunnableConfig is currently unused; configuration is loaded via Settings.
+    """
+    return get_agent()
