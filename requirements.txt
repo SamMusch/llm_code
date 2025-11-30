@@ -42,10 +42,12 @@ jsonpointer==3.0.0
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 kiwisolver==1.4.9
+langchain-anthropic>=0.2.0
+langchain-google-genai>=1.0.0
 langchain>=1.0.0,<2.0.0
-langchain-openai>=1.0.0,<2.0.0
+langchain-openai>=0.2.0
 langsmith>=0.3.0
-langgraph>=1.0.0,<2.0.0
+langgraph>=0.2.0
 langsmith==0.3.45
 lxml==5.3.1
 MarkupSafe==3.0.3
