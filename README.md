@@ -1,6 +1,6 @@
 
 
-**Conceptual notes**: https://sammusch.github.io/ds-garden/LLM/00-RAG/
+**Conceptual notes**: [sammusch.github.io](https://sammusch.github.io/ds-garden/LLM-RAG/01-RAG-Intro/)
 
 - Initial code based on [textbook](https://learning.oreilly.com/library/view/a-simple-guide/9781633435858/OEBPS/Text/part-1.html) & [github code](https://github.com/abhinav-kimothi/A-Simple-Guide-to-RAG)
 
