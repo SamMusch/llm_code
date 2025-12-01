@@ -7,7 +7,7 @@
 rag:
   paths:
     data_dir: "Data"
-    docs_dir: "Data/docs"
+    docs_dir: "/Users/Sam/projects/sam-ai/notes-vault/LLM-RAG"
     index_dir: "Data/index"
     logs_dir: "Data/logs"
 

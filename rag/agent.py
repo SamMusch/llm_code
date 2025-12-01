@@ -1,10 +1,10 @@
 # rag/agent.py
+# https://docs.langchain.com/oss/python/langchain/rag
 from __future__ import annotations
 from typing import Any, Dict, List
 from langchain.agents import create_agent as _lc_create_agent
-from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware import AgentState, before_model
 from langchain_core.messages import BaseMessage
-from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 from .config import Settings
 from .tools import search_docs, rebuild_index
@@ -15,50 +15,45 @@ except Exception:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
 
-class HistoryTrimMiddleware(AgentMiddleware):
-    """Middleware to trim conversation history based on a character budget."""
 
-    def __init__(self, max_context_chars: int) -> None:
-        self.max_context_chars = max_context_chars
+# ----
+# Middleware: trim conversation history based on a character budget.
+# node-style
+@before_model
+def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
+    messages = state.get("messages", [])
+    if not messages:
+        return None
 
-    def before_model(self, state: AgentState, runtime) -> Dict[str, Any] | None:
-        messages = state.get("messages", [])
-        if not messages or self.max_context_chars is None:
-            return None
+    MAX_CONTEXT_CHARS = 60000  # char budget for all message content
 
-        def _content_str(msg: BaseMessage) -> str:
-            c = getattr(msg, "content", "")
-            return c if isinstance(c, str) else str(c)
+    def _content_str(msg: BaseMessage) -> str:
+        c = getattr(msg, "content", "")
+        return c if isinstance(c, str) else str(c)
 
-        total_chars = sum(len(_content_str(m)) for m in messages)
-        if total_chars <= self.max_context_chars:
-            return None
+    total_chars = sum(len(_content_str(m)) for m in messages)
+    if total_chars <= MAX_CONTEXT_CHARS:
+        return None
 
-        trimmed: List[BaseMessage] = []
-        running = 0
-        for msg in reversed(messages):
-            text = _content_str(msg)
-            length = len(text)
-            # Always keep at least one message
-            if trimmed and running + length > self.max_context_chars:
-                break
-            trimmed.append(msg)
-            running += length
-        trimmed.reverse()
-
-        # Return partial state update
-        return {"messages": trimmed}
-
-# --- LLM construction --------------------------------------------------------
+    trimmed: List[BaseMessage] = []
+    running = 0
+    for msg in reversed(messages):
+        text = _content_str(msg)
+        length = len(text)
+        # Always keep at least one message
+        if trimmed and running + length > MAX_CONTEXT_CHARS:
+            break
+        trimmed.append(msg)
+        running += length
+    trimmed.reverse()
+    return {"messages": trimmed} # partial state update + pruned message list
 
 
-def build_llm(cfg: Settings | None = None):
-    """
-    Build base chat model
-    """
+# ----
+def get_agent(cfg: Settings | None = None):
+
+    # from config.py --> from rag.yaml
     cfg = cfg or Settings.load()
-
-    # Try to navigate nested rag.llm settings; fall back gracefully
     rag_cfg = getattr(cfg, "rag", cfg)
     llm_cfg = getattr(rag_cfg, "llm", rag_cfg)
     provider = getattr(llm_cfg, "provider", "openai")
@@ -66,35 +61,14 @@ def build_llm(cfg: Settings | None = None):
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model_name)
-
+        llm = ChatOpenAI(model=model_name)
     elif provider in {"google", "gemini", "google-genai", "google_genai"}:
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model=model_name)
-
+        llm = ChatGoogleGenerativeAI(model=model_name)
     else:
         raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
 
-
-# --- Agent factory -----------------------------------------------------------
-
-
-def get_agent(cfg: Settings | None = None):
-    """Create agent over local RAG tools."""
-    cfg = cfg or Settings.load()
-    llm = build_llm(cfg)
-
-    rag_cfg = getattr(cfg, "rag", cfg)
-    runtime_cfg = getattr(rag_cfg, "runtime", rag_cfg)
-    max_context_chars = getattr(runtime_cfg, "max_context_chars", 60000)
-    middleware = [HistoryTrimMiddleware(max_context_chars=max_context_chars)]
-
-
-    tools = [
-        search_docs,     # semantic search over FAISS index
-        rebuild_index,   # rebuild index if stale/missing
-        READ_DOC_TOOL,   # read doc by name (LRAT or local)
-    ]
+    tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
     system_prompt = (
         "You are a retrieval-augmented assistant over the user's local documents. "
@@ -106,32 +80,22 @@ def get_agent(cfg: Settings | None = None):
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-        middleware=middleware,
+        middleware=[trim_history],
     )
     return agent
 
+# ----
+# for langgraph
+def create_agent(config: RunnableConfig):
+    return get_agent()
 
-# --- Convenience wrapper for simple Q&A -------------------------------------
-
+# ----
 def run_agent(question: str, cfg: Settings | None = None) -> str:
-    """Helper: input question ---> output answer"""
     agent = get_agent(cfg)
-
-    state: Dict[str, Any] = agent.invoke(
-        {"messages": [{"role": "user", "content": question}]}
-    )
-    messages: List[BaseMessage] = state.get("messages", [])
+    state = agent.invoke({"messages": [{"role": "user", "content": question}]})
+    messages = state.get("messages", [])
     if not messages:
         return ""
     last = messages[-1]
-    # BaseMessage has .content; fall back to str as a guard
     content = getattr(last, "content", None)
     return content if isinstance(content, str) else str(last)
-
-
-def create_agent(config: RunnableConfig):
-    """LangGraph factory: return the runnable agent for this graph.
-
-    The RunnableConfig is currently unused; configuration is loaded via Settings.
-    """
-    return get_agent()
