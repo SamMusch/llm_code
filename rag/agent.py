@@ -2,62 +2,85 @@
 # https://docs.langchain.com/oss/python/langchain/rag
 from __future__ import annotations
 from typing import Any, Dict, List
+import tiktoken
+
 from langchain.agents import create_agent as _lc_create_agent
 from langchain.agents.middleware import AgentState, before_model
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
-from .config import Settings
+
+from .config import Settings, get_settings
 from .tools import search_docs, rebuild_index
 
 try:
     from retrieval_graph.tools import read_doc_by_name as READ_DOC_TOOL
-except Exception:
+except ImportError:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
-
+SYSTEM_PROMPT = (
+    "You are a retrieval-augmented assistant over the user's local documents. "
+    "Use the tools to search, read, or reindex documents as needed. "
+    "Prefer `search_docs` for normal lookups."
+)
 
 # ----
-# Middleware: trim conversation history based on a character budget.
-# node-style
+# Middleware: trim conversation history based on a token budget.
 @before_model
 def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
     messages = state.get("messages", [])
     if not messages:
         return None
 
-    MAX_CONTEXT_CHARS = 60000  # char budget for all message content
+    # Load config to get trimming settings if available, otherwise default
+    # Note: Runtime access to config isn't passed directly here unless properly bound.
+    # We'll use the singleton for simplicity in this middleware.
+    cfg = get_settings()
+    # Default to 128k tokens if not specified (common for modern models)
+    # But let's be safe and use a smaller default if not in config, or use config's chars as proxy?
+    # Config has 'max_context_chars', let's stick to a sane token limit.
+    # 4 chars ~= 1 token. 60000 chars ~= 15000 tokens. 
+    # Let's set a hard limit or read from a new config field if it existed.
+    # For now, we'll imply a limit, or maybe use max_context_chars / 4.
+    
+    max_chars = getattr(cfg, "max_context_chars", 60000)
+    # Estimate max tokens 
+    MAX_TOKENS = max_chars // 4 if max_chars else 15000
 
-    def _content_str(msg: BaseMessage) -> str:
-        c = getattr(msg, "content", "")
-        return c if isinstance(c, str) else str(c)
+    encoding = tiktoken.get_encoding("cl100k_base")
 
-    total_chars = sum(len(_content_str(m)) for m in messages)
-    if total_chars <= MAX_CONTEXT_CHARS:
+    def _get_tokens(msg: BaseMessage) -> int:
+        content = getattr(msg, "content", "")
+        text = content if isinstance(content, str) else str(content)
+        return len(encoding.encode(text))
+
+    total_tokens = sum(_get_tokens(m) for m in messages)
+    if total_tokens <= MAX_TOKENS:
         return None
 
     trimmed: List[BaseMessage] = []
-    running = 0
+    current_tokens = 0
+    # Keep messages from the end until we hit the limit
     for msg in reversed(messages):
-        text = _content_str(msg)
-        length = len(text)
-        # Always keep at least one message
-        if trimmed and running + length > MAX_CONTEXT_CHARS:
+        tokens = _get_tokens(msg)
+        if trimmed and current_tokens + tokens > MAX_TOKENS:
+            # Always keep at least the last message if possible, 
+            # but if the last message itself is huge, we might be in trouble. 
+            # Assuming we can keep at least one.
             break
         trimmed.append(msg)
-        running += length
+        current_tokens += tokens
+    
     trimmed.reverse()
-    return {"messages": trimmed} # partial state update + pruned message list
+    return {"messages": trimmed}
 
 
 # ----
 def get_agent(cfg: Settings | None = None):
-
-    # from config.py --> from rag.yaml
-    cfg = cfg or Settings.load()
-    rag_cfg = getattr(cfg, "rag", cfg)
-    llm_cfg = getattr(rag_cfg, "llm", rag_cfg)
-    provider = getattr(llm_cfg, "provider", "openai")
-    model_name = getattr(llm_cfg, "model", "gpt-4o-mini")
+    cfg = cfg or get_settings()
+    
+    # Access settings directly from the typed Settings object
+    provider = cfg.llm_provider
+    model_name = cfg.llm_model
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
@@ -66,20 +89,19 @@ def get_agent(cfg: Settings | None = None):
         from langchain_google_genai import ChatGoogleGenerativeAI
         llm = ChatGoogleGenerativeAI(model=model_name)
     else:
-        raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
+        # Fallback for compatible providers or raise error
+        try:
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(model=model_name, base_url=os.environ.get("OPENAI_API_BASE"))
+        except Exception:
+            raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
 
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
-
-    system_prompt = (
-        "You are a retrieval-augmented assistant over the user's local documents. "
-        "Use the tools to search, read, or reindex documents as needed. "
-        "Prefer `search_docs` for normal lookups."
-    )
 
     agent = _lc_create_agent(
         model=llm,
         tools=tools,
-        system_prompt=system_prompt,
+        system_prompt=SYSTEM_PROMPT,
         middleware=[trim_history],
     )
     return agent
