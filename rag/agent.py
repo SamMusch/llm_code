@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 import tiktoken
-
+import os
 from langchain.agents import create_agent as _lc_create_agent
 from langchain.agents.middleware import AgentState, before_model
 from langchain_core.messages import BaseMessage
@@ -88,6 +88,12 @@ def get_agent(cfg: Settings | None = None):
     elif provider in {"google", "gemini", "google-genai", "google_genai"}:
         from langchain_google_genai import ChatGoogleGenerativeAI
         llm = ChatGoogleGenerativeAI(model=model_name)
+    
+    elif provider == "ollama":
+        from langchain_ollama import ChatOllama
+        llm = ChatOllama(
+            model=model_name,
+            base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),)
     else:
         # Fallback for compatible providers or raise error
         try:

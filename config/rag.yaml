@@ -7,13 +7,14 @@
 rag:
   paths:
     data_dir: "Data"
-    docs_dir: "/Users/Sam/projects/sam-ai/notes-vault/LLM-RAG"
+    docs_dir: "Data/docs"
     index_dir: "Data/index"
     logs_dir: "Data/logs"
 
   llm:
-    provider: "openai"
-    model: "gpt-4o-mini"
+    provider: "ollama" # "openai"
+    model: "llama3.2:1b" # "gpt-4o-mini"
+    base_url: "http://ollama:11434" # service name
 
   embedding:
     model: "text-embedding-3-small"

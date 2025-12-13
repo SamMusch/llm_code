@@ -1,0 +1,31 @@
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  llm_code:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llm_code
+    depends_on:
+      - ollama
+    env_file:
+      - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - .:/app
+    working_dir: /app
+    tty: true
+    stdin_open: true
+    ports:
+      - "127.0.0.1:2024:2024"
+
+volumes:
+  ollama:
