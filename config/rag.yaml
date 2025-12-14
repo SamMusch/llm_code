@@ -17,7 +17,7 @@ rag:
     base_url: "http://ollama:11434" # service name
 
   embedding:
-    model: "text-embedding-3-small"
+    model: "nomic-embed-text" #"text-embedding-3-small"
     chunk_size: 1200
     chunk_overlap: 200
     top_k: 4
