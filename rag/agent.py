@@ -46,12 +46,18 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
     # Estimate max tokens 
     MAX_TOKENS = max_chars // 4 if max_chars else 15000
 
-    encoding = tiktoken.get_encoding("cl100k_base")
+    # encoding = tiktoken.get_encoding("cl100k_base")
+
+    # def _get_tokens(msg: BaseMessage) -> int:
+    #     content = getattr(msg, "content", "")
+    #     text = content if isinstance(content, str) else str(content)
+    #     return len(encoding.encode(text))
 
     def _get_tokens(msg: BaseMessage) -> int:
         content = getattr(msg, "content", "")
         text = content if isinstance(content, str) else str(content)
-        return len(encoding.encode(text))
+        return max(1, len(text) // 4)
+
 
     total_tokens = sum(_get_tokens(m) for m in messages)
     if total_tokens <= MAX_TOKENS:

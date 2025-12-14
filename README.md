@@ -75,8 +75,19 @@ docker exec -it ollama ollama pull llama3.2:1b
 docker exec -it ollama ollama list
 ```
 
+---
+
+### Usage
+
 ```bash
-# USAGE COMMANDS
+cd /path/to/your/folder
+
+# if changed reqs, dependencies, etc
+docker compose up -d --build
+
+# start & stop
+docker compose up -d
+docker compose down
 
 # index docs
 docker compose exec llm_code python -m rag.cli index
@@ -84,6 +95,6 @@ docker compose exec llm_code python -m rag.cli index
 # ask question via cli
 docker compose exec llm_code python -m rag.cli ask "test question"
 
-# start dev server (LangGraph dev server + LangSmith Studio)
-docker compose exec llm_code langgraph dev --host 0.0.0.0 --port 2024
+# launch langsmith
+# https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
 ```

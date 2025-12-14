@@ -19,13 +19,14 @@ services:
       - .env
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
+      BG_JOB_ISOLATED_LOOPS: "true"
+      LANGGRAPH_BASE_URL: http://127.0.0.1:2024
     volumes:
       - .:/app
     working_dir: /app
-    tty: true
-    stdin_open: true
     ports:
       - "127.0.0.1:2024:2024"
+    command: langgraph dev --host 0.0.0.0 --port 2024
 
 volumes:
   ollama:
