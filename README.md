@@ -82,12 +82,12 @@ docker exec -it ollama ollama list
 ```bash
 cd /path/to/your/folder
 
-# if changed reqs, dependencies, etc
-docker compose up -d --build
-
 # start & stop
 docker compose up -d
 docker compose down
+
+# if changed reqs, dependencies, etc
+docker compose up -d --build
 
 # index docs
 docker compose exec llm_code python -m rag.cli index
