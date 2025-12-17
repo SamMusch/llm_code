@@ -70,8 +70,12 @@ LANGSMITH_PROJECT=llm_code      # folder name
 # start the system (Ollama model server + llm_code RAG app)
 docker compose up -d --build
 
-# pull a local model
+# pull a local CHAT model
 docker exec -it ollama ollama pull llama3.2:1b
+docker exec -it ollama ollama list
+
+# pull a local EMBEDDING model
+docker exec -it ollama ollama pull nomic-embed-text
 docker exec -it ollama ollama list
 ```
 
