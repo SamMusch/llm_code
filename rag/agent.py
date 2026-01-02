@@ -88,6 +88,8 @@ def get_agent(cfg: Settings | None = None):
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 
+    tools = [search_docs, rebuild_index, READ_DOC_TOOL]
+
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(model=model_name)
@@ -95,11 +97,17 @@ def get_agent(cfg: Settings | None = None):
         from langchain_google_genai import ChatGoogleGenerativeAI
         llm = ChatGoogleGenerativeAI(model=model_name)
     
+    #elif provider == "ollama":
+    #    from langchain_ollama import ChatOllama
+    #    llm = ChatOllama(
+    #        model=model_name,
+    #        base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),)
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
         llm = ChatOllama(
             model=model_name,
-            base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),)
+            base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
+        ).bind_tools(tools)
     else:
         # Fallback for compatible providers or raise error
         try:
@@ -107,8 +115,6 @@ def get_agent(cfg: Settings | None = None):
             llm = ChatOpenAI(model=model_name, base_url=os.environ.get("OPENAI_API_BASE"))
         except Exception:
             raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
-
-    tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
     agent = _lc_create_agent(
         model=llm,
@@ -124,12 +130,13 @@ def create_agent(config: RunnableConfig):
     return get_agent()
 
 # ----
-def run_agent(question: str, cfg: Settings | None = None) -> str:
+def run_agent(question: str, cfg: Settings | None = None) -> dict:
     agent = get_agent(cfg)
-    state = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    messages = state.get("messages", [])
-    if not messages:
-        return ""
-    last = messages[-1]
-    content = getattr(last, "content", None)
-    return content if isinstance(content, str) else str(last)
+    state = agent.invoke(
+        {"messages": [{"role": "user", "content": question}]}
+    )
+
+    # Always return state — LangGraph requires dicts
+    return {
+        "messages": state.get("messages", [])
+    }

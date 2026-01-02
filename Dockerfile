@@ -16,3 +16,6 @@ COPY . /app
 
 # Default: open a shell; you'll run your CLI explicitly via docker compose run/exec
 CMD ["bash"]
+
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

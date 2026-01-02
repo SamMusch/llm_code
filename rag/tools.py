@@ -11,12 +11,35 @@ from .retriever import load_retriever, build_index
 
 
 @tool
-def read_doc_by_name(name: str, cfg: dict | None = None) -> str:
-    """flow: load config ---> scan docs files ---> match filename --> return text of first matching file"""
+def read_doc_by_name(
+    name: str | None = None,
+    cfg: dict | None = None,
+    properties: dict | None = None,
+    type: str | None = None,  # noqa: A002  (shadows built-in, but matches incoming key)
+) -> str:
+    """
+    Read a document by filename substring.
+
+    Expected args (normal):
+      {"name": "<substring>", "cfg": {...}}
+
+    Some local models may incorrectly send a JSON-schema-shaped payload:
+      {"type":"object","properties":{"name":"...","cfg":{...}}}
+    This function accepts both.
+    """
+    if name is None and properties:
+        # Handle schema-shaped tool call args
+        name = properties.get("name")
+        cfg = properties.get("cfg") if cfg is None else cfg
+
+    if not name:
+        return ""
+
     _cfg = Settings.load() if cfg is None else Settings(**cfg)
     root = Path(_cfg.docs_dir)
     candidates = list(root.rglob("*"))
-    name_l = name.lower()
+    name_l = str(name).lower()
+
     for p in candidates:
         if p.is_file() and name_l in p.name.lower():
             try:
@@ -24,6 +47,7 @@ def read_doc_by_name(name: str, cfg: dict | None = None) -> str:
             except Exception:
                 continue
     return ""
+
 
 
 @tool

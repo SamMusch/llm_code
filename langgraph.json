@@ -3,5 +3,13 @@
     "agent": "rag.agent:create_agent"
   },
   "env": ".env",
-  "dependencies": ["."]
+  "dependencies": ["."],
+  "http": {
+    "cors": {
+      "allow_origins": ["https://smith.langchain.com"],
+      "allow_credentials": true,
+      "allow_methods": ["*"],
+      "allow_headers": ["*"]
+    }
+  }
 }
