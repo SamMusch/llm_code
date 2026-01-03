@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="app-shell">
+  <div class="app-header">
+    <h2>Chat</h2>
+    <div class="app-actions">
+      <a class="btn" href="/logout">Logout</a>
+    </div>
+  </div>
+
+  <div class="chat">
+    <div id="chatLog" class="chat-log"></div>
+
+    <div class="chat-input">
+      <input id="chatMsg" type="text" placeholder="Ask something..." />
+      <button id="sendBtn" class="btn primary">Send</button>
+    </div>
+
+    <div class="muted small">
+      Streaming via SSE: <code>/chat/stream</code>
+    </div>
+  </div>
+</section>
+
+<script src="/static/app.js"></script>
+{% endblock %}

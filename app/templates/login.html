@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Login</h2>
+  <p class="muted">Stub login (sets a cookie). Real auth comes later.</p>
+
+  <form class="form" method="post" action="/login">
+    <label>
+      <span>Email</span>
+      <input name="email" type="email" placeholder="you@company.com" />
+    </label>
+    <label>
+      <span>Password</span>
+      <input name="password" type="password" placeholder="••••••••" />
+    </label>
+    <button class="btn primary" type="submit">Continue</button>
+  </form>
+</section>
+{% endblock %}

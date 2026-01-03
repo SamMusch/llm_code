@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 # System deps (keep minimal; add more only if your requirements need it)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -13,9 +16,6 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy the repo
 COPY . /app
-
-# Default: open a shell; you'll run your CLI explicitly via docker compose run/exec
-CMD ["bash"]
 
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

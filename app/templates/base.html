@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title if title else "Site" }}</title>
+  <link rel="stylesheet" href="/static/site.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="/">YourSite</a>
+      <nav class="nav">
+        <a href="/">Home</a>
+        <a href="/app">App</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span>© {{ 2026 }}</span>
+      <span class="muted">Single-container FastAPI + Jinja2</span>
+    </div>
+  </footer>
+</body>
+</html>

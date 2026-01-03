@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="hero-left">
+    <h1>Learn faster with a focused chatbot.</h1>
+    <p class="lead">
+      Simple landing page structure: headline, subtext, primary CTA, and a few feature cards.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="/login">Start Learning</a>
+      <a class="btn" href="/app">Open App</a>
+    </div>
+    <div class="hero-metrics">
+      <div class="metric"><div class="metric-num">Local-first</div><div class="metric-label">Keep files yours</div></div>
+      <div class="metric"><div class="metric-num">Low-cost</div><div class="metric-label">ECS + Bedrock</div></div>
+      <div class="metric"><div class="metric-num">Extendable</div><div class="metric-label">Auth + persistence later</div></div>
+    </div>
+  </div>
+
+  <div class="hero-right">
+    <div class="mock">
+      <div class="mock-header">Preview</div>
+      <div class="mock-body">
+        <div class="mock-line"></div>
+        <div class="mock-line short"></div>
+        <div class="mock-line"></div>
+        <div class="mock-line short"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cards">
+  <div class="card">
+    <h3>Streaming chat</h3>
+    <p>SSE endpoint wired for token streaming.</p>
+  </div>
+  <div class="card">
+    <h3>One container</h3>
+    <p>FastAPI serves HTML, JS, CSS, and the API.</p>
+  </div>
+  <div class="card">
+    <h3>Future-ready</h3>
+    <p>Add Cognito + DynamoDB without a rewrite.</p>
+  </div>
+</section>
+{% endblock %}
