@@ -15,6 +15,7 @@ class Settings(BaseModel):
     # llm
     llm_provider: str
     llm_model: str  # LLM model
+    llm_base_url: str | None = None  # optional, for providers like Ollama
 
     # embedding
     k: int                  # top k docs
@@ -46,6 +47,7 @@ class Settings(BaseModel):
 
             "llm.provider":        ("llm_provider", None),  # llm
             "llm.model":           ("llm_model", None),
+            "llm.base_url":        ("llm_base_url", None),
             
             "embedding.model":        ("embedding_model", None),  # embedding
             "embedding.chunk_size":   ("chunk_size", None),
@@ -67,15 +69,15 @@ class Settings(BaseModel):
             "DOCS_DIR":        ("docs_dir", Path),
             "INDEX_DIR":       ("faiss_dir", Path),
             "LOGS_DIR":        ("logs_dir", Path),
-            # "LLM_PROVIDER":    ("llm_provider", str),
-            # "LLM_MODEL":       ("llm_model", str),
-            # "K":               ("k", int),
-            # "EMBEDDING_MODEL": ("embedding_model", str),
-            }
+            "LLM_PROVIDER":    ("llm_provider", str),  # 260102 for aws 
+            "LLM_MODEL":       ("llm_model", str),     # 260102 for aws 
+            "LLM_BASE_URL":    ("llm_base_url", str),
+            "EMBEDDING_MODEL": ("embedding_model", str),
+        }
         for env_var, (env_key, cast) in env_override_mapping.items():
             if env_var in os.environ:
                 raw_value = os.environ[env_var]
-                env[env_key] = cast(raw_value)
+                env[env_key] = cast(raw_value) if cast else raw_value
 
         return cls(**env)
 

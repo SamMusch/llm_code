@@ -96,6 +96,17 @@ def get_agent(cfg: Settings | None = None):
     elif provider in {"google", "gemini", "google-genai", "google_genai"}:
         from langchain_google_genai import ChatGoogleGenerativeAI
         llm = ChatGoogleGenerativeAI(model=model_name)
+    elif provider == "bedrock":
+        import boto3
+        from langchain_aws import ChatBedrock
+
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
+
+        llm = ChatBedrock(
+            client=bedrock_runtime,
+            model_id=model_name,
+        ).bind_tools(tools)
     
     #elif provider == "ollama":
     #    from langchain_ollama import ChatOllama

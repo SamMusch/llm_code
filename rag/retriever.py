@@ -17,6 +17,7 @@ from langchain_community.vectorstores import FAISS
 # from langchain_openai import OpenAIEmbeddings
 # from langchain_community.embeddings import OllamaEmbeddings
 from langchain_ollama import OllamaEmbeddings
+from langchain_aws import BedrockEmbeddings
 from langchain_community.document_loaders import (DirectoryLoader,TextLoader,UnstructuredFileLoader)
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.document_loaders.excel import UnstructuredExcelLoader
@@ -24,6 +25,7 @@ from langchain_community.document_loaders.email import (UnstructuredEmailLoader,
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Simple loader registry by extension
+
 EXT_TO_LOADER = {
     ".txt": TextLoader,
     ".md": TextLoader,
@@ -39,6 +41,22 @@ EXT_TO_LOADER = {
     ".eml": UnstructuredEmailLoader,
     ".msg": OutlookMessageLoader,
 }
+
+
+def _get_embeddings():
+    """Return an embeddings client appropriate for the current runtime."""
+    provider = getattr(cfg, "llm_provider", "ollama")
+
+    # AWS: use Bedrock embeddings (no Ollama dependency)
+    if provider == "bedrock":
+        # Prefer a valid Bedrock embedding model id if the user provided one.
+        # Otherwise fall back to Titan Embed.
+        model_id = getattr(cfg, "embedding_model", None) or "amazon.titan-embed-text-v2:0"
+        return BedrockEmbeddings(model_id=model_id)
+
+    # Local/default: Ollama embeddings
+    base_url = getattr(cfg, "llm_base_url", None) or os.environ.get("OLLAMA_BASE_URL") or "http://ollama:11434"
+    return OllamaEmbeddings(model=cfg.embedding_model, base_url=base_url)
 
 
 def _load_documents(input_dir: Path) -> list:
@@ -122,7 +140,7 @@ def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> No
     chunks = splitter.split_documents(docs)
 
     #embeddings = OpenAIEmbeddings(model=cfg.embedding_model)
-    embeddings = OllamaEmbeddings(model=cfg.embedding_model, base_url="http://ollama:11434")
+    embeddings = _get_embeddings()
 
     vs = FAISS.from_documents(chunks, embeddings)  # FAISS for now
     vs.save_local(str(cfg.faiss_dir))
@@ -151,7 +169,7 @@ def load_retriever(k: int | None = None):
             )
 
     #embeddings = OpenAIEmbeddings(model=cfg.embedding_model)
-    embeddings = OllamaEmbeddings(model=cfg.embedding_model, base_url="http://ollama:11434")
+    embeddings = _get_embeddings()
 
     try:
         vs = FAISS.load_local(
