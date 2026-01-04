@@ -11,3 +11,4 @@ __pycache__/
 # Env files
 .env
 .env.*
+llm-cmds.md

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from rag.agent import get_agent
+from rag.config import get_settings
 
 
 app = FastAPI()
-
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
 templates = Jinja2Templates(directory="app/templates")
 
 
@@ -27,19 +26,30 @@ def is_authed(request: Request) -> bool:
 
 
 async def llm_stream(message: str) -> AsyncIterator[str]:
-    """
-    Replace this stub with your existing llm_code call that yields tokens/chunks.
-    Keep the interface: async iterator of string chunks.
-    """
-    # Example shape (you will adapt to your real code):
-    # from llm_code.rag.agent import chat_stream
-    # async for chunk in chat_stream(message=message):
-    #     yield chunk
+    """Yield text chunks from the real LangChain/LangGraph agent (Bedrock in ECS via env)."""
+    cfg = get_settings()
+    agent = get_agent(cfg)
 
-    demo = f"Stub response. You said: {message}"
-    for ch in demo:
-        await asyncio.sleep(0.01)
-        yield ch
+    # Match the same input shape used by rag/agent.py::run_agent
+    inputs = {"messages": [{"role": "user", "content": message}]}
+
+    async for event in agent.astream_events(inputs, version="v2"):
+        if event.get("event") != "on_chat_model_stream":
+            continue
+
+        chunk = (event.get("data") or {}).get("chunk")
+        if chunk is None:
+            continue
+
+        delta = getattr(chunk, "content", None)
+        if not delta:
+            continue
+
+        # Some providers return lists of content parts; normalize to string.
+        if isinstance(delta, list):
+            delta = "".join(str(p) for p in delta)
+
+        yield str(delta)
 
 
 @app.get("/", response_class=HTMLResponse)
