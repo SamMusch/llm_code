@@ -194,3 +194,45 @@ def load_retriever(k: int | None = None):
 
     return vs.as_retriever(search_kwargs={"k": k})
 
+
+def verify_faiss_dim_matches_embeddings() -> None:
+    """Fail fast if the FAISS index dimension doesn't match the current embedding model.
+
+    This catches the common runtime crash:
+      faiss/class_wrappers.py ... assert d == self.d
+
+    Call this at app startup so you find misconfigurations immediately.
+    """
+    index_file = cfg.faiss_dir / "index.faiss"
+    if not cfg.faiss_dir.exists() or not index_file.exists():
+        raise RuntimeError(
+            f"FAISS index not found at {index_file}. Build it first with: `python -m rag.cli index`."
+        )
+
+    embeddings = _get_embeddings()
+
+    # 1) Embedding dimension from a single probe vector
+    probe = embeddings.embed_query("ping")
+    emb_dim = len(probe) if probe is not None else 0
+
+    # 2) FAISS index dimension
+    vs = FAISS.load_local(
+        str(cfg.faiss_dir),
+        embeddings,
+        allow_dangerous_deserialization=True,
+    )
+    faiss_dim = int(getattr(getattr(vs, "index", None), "d", 0) or 0)
+
+    if not emb_dim or not faiss_dim:
+        raise RuntimeError(f"Failed to determine dims (emb_dim={emb_dim}, faiss_dim={faiss_dim}).")
+
+    if emb_dim != faiss_dim:
+        raise RuntimeError(
+            "Embedding/FAISS dimension mismatch: "
+            f"emb_dim={emb_dim} (provider={getattr(cfg, 'llm_provider', None)} embedding_model={getattr(cfg, 'embedding_model', None)}) "
+            f"!= faiss_dim={faiss_dim} (faiss_dir={cfg.faiss_dir}). "
+            "Rebuild the index with the same embedding model you will query with."
+        )
+
+    print(f"[startup] FAISS dim OK (d={faiss_dim})", flush=True)
+

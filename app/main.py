@@ -8,9 +8,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from rag.agent import get_agent
 from rag.config import get_settings
+from rag.retriever import verify_faiss_dim_matches_embeddings
+from rag.utils import extract_text_from_stream_delta
 
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def _startup_fail_fast() -> None:
+    # Fail fast on common RAG misconfig: index built with a different embedding model.
+    verify_faiss_dim_matches_embeddings()
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
@@ -42,14 +50,11 @@ async def llm_stream(message: str) -> AsyncIterator[str]:
             continue
 
         delta = getattr(chunk, "content", None)
-        if not delta:
+        text = extract_text_from_stream_delta(delta)
+        if not text:
             continue
 
-        # Some providers return lists of content parts; normalize to string.
-        if isinstance(delta, list):
-            delta = "".join(str(p) for p in delta)
-
-        yield str(delta)
+        yield text
 
 
 @app.get("/", response_class=HTMLResponse)
