@@ -23,6 +23,7 @@ services:
       LANGGRAPH_BASE_URL: http://127.0.0.1:2024
     volumes:
       - .:/app
+      - ~/.aws:/root/.aws:ro
     working_dir: /app
     ports:
       - "127.0.0.1:2024:2024"

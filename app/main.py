@@ -15,10 +15,24 @@ from rag.utils import extract_text_from_stream_delta
 app = FastAPI()
 
 
+import os
+import sys
+
 @app.on_event("startup")
 def _startup_fail_fast() -> None:
+    # Allow skipping fail-fast via env var (e.g., during FAISS rebuild)
+    if os.getenv("SKIP_FAIL_FAST", "false").lower() in ("1", "true"):
+        print("[startup] SKIP_FAIL_FAST enabled: skipping FAISS dimension check.")
+        return
+
     # Fail fast on common RAG misconfig: index built with a different embedding model.
-    verify_faiss_dim_matches_embeddings()
+    try:
+        verify_faiss_dim_matches_embeddings()
+    except Exception as e:
+        print(f"[startup] Fail-fast check failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
