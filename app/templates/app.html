@@ -1,26 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="app-shell">
-  <div class="app-header">
-    <h2>Chat</h2>
-    <div class="app-actions">
-      <a class="btn" href="/logout">Logout</a>
+<div class="cg">
+  <aside class="cg-sidebar">
+    <div class="cg-sidebar-top">
+      <button id="newChatBtn" class="btn sidebar">New chat</button>
+      <a class="btn sidebar" href="/logout">Logout</a>
     </div>
-  </div>
 
-  <div class="chat">
-    <div id="chatLog" class="chat-log"></div>
+    <div class="cg-chatlist" id="chatList" aria-label="Chats"></div>
+  </aside>
 
-    <div class="chat-input">
-      <input id="chatMsg" type="text" placeholder="Ask something..." />
+  <section class="cg-main">
+    <header class="cg-header">
+      <div class="cg-title" id="chatTitle">New chat</div>
+      <div class="cg-subtitle muted small">SSE: <code>/chat/stream</code></div>
+    </header>
+
+    <div id="chatMessages" class="cg-messages" aria-label="Messages"></div>
+
+    <div class="cg-composer">
+      <textarea id="chatInput" rows="1" placeholder="Message..." aria-label="Message"></textarea>
       <button id="sendBtn" class="btn primary">Send</button>
     </div>
-
-    <div class="muted small">
-      Streaming via SSE: <code>/chat/stream</code>
-    </div>
-  </div>
-</section>
+  </section>
+</div>
 
 <script src="/static/app.js"></script>
 {% endblock %}

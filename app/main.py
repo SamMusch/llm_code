@@ -6,6 +6,8 @@ import uuid
 import logging
 from typing import AsyncIterator
 
+import boto3
+
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -165,6 +167,196 @@ def strip_thinking(text: str) -> str:
     return text
 
 
+class _TaggedBlockStripper:
+    """Stateful stripper for <thinking>/<analysis> blocks across streamed chunks."""
+
+    _PAIRS = [
+        ("<thinking>", "</thinking>"),
+        ("<analysis>", "</analysis>"),
+    ]
+
+    def __init__(self) -> None:
+        self._in_block = False
+        self._carry = ""
+        self._max_tag = max(max(len(a), len(b)) for a, b in self._PAIRS)
+        self._carry_len = max(16, self._max_tag)  # extra safety for partial tags
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+
+        s = (self._carry or "") + text
+        s_low = s.lower()
+
+        out_parts: list[str] = []
+        i = 0
+
+        while i < len(s):
+            if not self._in_block:
+                # Find earliest opening tag among pairs
+                next_pos = None
+                next_open = None
+                next_close = None
+                for open_tag, close_tag in self._PAIRS:
+                    p = s_low.find(open_tag, i)
+                    if p != -1 and (next_pos is None or p < next_pos):
+                        next_pos = p
+                        next_open = open_tag
+                        next_close = close_tag
+
+                if next_pos is None:
+                    break
+
+                # Emit everything before the tag
+                out_parts.append(s[i:next_pos])
+                i = next_pos + len(next_open)
+                self._in_block = True
+            else:
+                # Skip until we find the corresponding close tag
+                found_close = False
+                for open_tag, close_tag in self._PAIRS:
+                    p = s_low.find(close_tag, i)
+                    if p != -1:
+                        i = p + len(close_tag)
+                        self._in_block = False
+                        found_close = True
+                        break
+
+                if not found_close:
+                    # Need more data to complete the closing tag
+                    break
+
+        # Remainder handling with carry to catch partial tags across boundaries
+        remainder = s[i:]
+
+        if self._in_block:
+            # Discard content inside the block; keep only a tail for partial close-tag matching
+            self._carry = remainder[-self._carry_len :]
+            return "".join(out_parts)
+
+        # Not in a block: keep a tail as carry to detect partial open tags
+        if len(remainder) <= self._carry_len:
+            self._carry = remainder
+            return "".join(out_parts)
+
+        self._carry = remainder[-self._carry_len :]
+        out_parts.append(remainder[: -self._carry_len])
+        return "".join(out_parts)
+
+    def flush(self) -> str:
+        """Flush any safe remaining text (only when not inside a block)."""
+        if self._in_block:
+            self._carry = ""
+            return ""
+        out = self._carry
+        self._carry = ""
+        return out
+
+
+def _ddb_table():
+    """Return the DynamoDB table used for chat history."""
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    table_name = os.getenv("DDB_TABLE", "rag_chat_history")
+    return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+def _five_word_title(text: str) -> str:
+    """Derive a short sidebar title from the first user prompt.
+
+    Note: this is not a semantic summary; it's the first 5 words cleaned.
+    """
+    if not text:
+        return "Untitled"
+    s = " ".join(str(text).strip().split())
+    if not s:
+        return "Untitled"
+
+    # Keep basic word tokens
+    words = []
+    for w in s.split(" "):
+        w2 = w.strip().strip("\"'`.,:;!?()[]{}<>")
+        if w2:
+            words.append(w2)
+        if len(words) >= 5:
+            break
+
+    if not words:
+        return "Untitled"
+    return " ".join(words)
+
+
+@app.get("/api/sessions")
+async def api_list_sessions(limit: int = 50):
+    """List recent session_ids for the sidebar.
+
+    Implementation note: uses Scan (OK for now). For scale, add a Sessions table or a GSI.
+    """
+    table = _ddb_table()
+
+    # Small table expected during pilot; scan all items.
+    resp = table.scan()
+
+    # Track: last_ts (for ordering) + first user message (for title)
+    sessions: dict[str, dict] = {}
+
+    for item in resp.get("Items", []) or []:
+        sid = item.get("session_id")
+        if not sid:
+            continue
+
+        # ts is stored as Number; be defensive
+        try:
+            ts = int(item.get("ts", 0))
+        except Exception:
+            ts = 0
+
+        s = sessions.get(sid)
+        if s is None:
+            s = {
+                "session_id": sid,
+                "last_ts": ts,
+                "first_user_ts": None,
+                "first_user_message": "",
+            }
+            sessions[sid] = s
+
+        # Update last_ts (max)
+        if ts > int(s.get("last_ts", 0) or 0):
+            s["last_ts"] = ts
+
+        # Capture first user message (min ts among user messages)
+        if (item.get("role") == "user") and item.get("message"):
+            cur_first = s.get("first_user_ts")
+            if (cur_first is None) or (ts < int(cur_first)):
+                s["first_user_ts"] = ts
+                s["first_user_message"] = str(item.get("message") or "")
+
+    out = []
+    for s in sessions.values():
+        title = _five_word_title(s.get("first_user_message") or "")
+        out.append(
+            {
+                "session_id": s["session_id"],
+                "last_ts": s.get("last_ts", 0),
+                "title": title,
+            }
+        )
+
+    out = sorted(out, key=lambda x: x.get("last_ts", 0), reverse=True)[:limit]
+    return {"sessions": out}
+
+
+@app.get("/api/sessions/{session_id}")
+async def api_get_session(session_id: str, limit: int = 200):
+    """Load messages for a session (oldest -> newest)."""
+    history = DynamoDBChatMessageHistory(session_id=session_id, limit=limit)
+    msgs = history.messages
+    return {
+        "session_id": session_id,
+        "messages": lc_messages_to_dicts(msgs),
+    }
+
+
 @app.get("/chat/stream")
 async def chat_stream(request: Request, message: str = "", session_id: str | None = None):
     msg = (message or "").strip()
@@ -195,10 +387,11 @@ async def chat_stream(request: Request, message: str = "", session_id: str | Non
         yield b"event: start\ndata: ok\n\n"
 
         full: list[str] = []
+        stripper = _TaggedBlockStripper()
         try:
             async for chunk in llm_stream(context_msgs):
-                # Strip thinking/analysis content
-                cleaned = strip_thinking(chunk)
+                # Strip tagged blocks across chunk boundaries (e.g., <thinking> ... </thinking>)
+                cleaned = stripper.feed(chunk)
                 if not cleaned:
                     continue
 
@@ -208,6 +401,13 @@ async def chat_stream(request: Request, message: str = "", session_id: str | Non
                 safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
                 yield f"data: {safe}\n\n".encode("utf-8")
         finally:
+            # Flush any remaining safe text (only when not inside a tagged block)
+            tail = stripper.flush()
+            if tail:
+                full.append(tail)
+                safe_tail = tail.replace("\r", "\\r").replace("\n", "\\n")
+                yield f"data: {safe_tail}\n\n".encode("utf-8")
+
             if full:
                 try:
                     history.add_ai_message("".join(full))

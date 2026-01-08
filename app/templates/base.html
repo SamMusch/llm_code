@@ -6,7 +6,8 @@
   <title>{{ title if title else "Site" }}</title>
   <link rel="stylesheet" href="/static/site.css" />
 </head>
-<body>
+<body class="{% if full_bleed %}full-bleed{% endif %}">
+  {% if (not hide_topbar) and (not full_bleed) %}
   <header class="topbar">
     <div class="container topbar-inner">
       <a class="brand" href="/">YourSite</a>
@@ -16,16 +17,19 @@
       </nav>
     </div>
   </header>
+  {% endif %}
 
-  <main class="container">
+  <main class="{{ 'app-container' if full_bleed else 'container' }}">
     {% block content %}{% endblock %}
   </main>
 
+  {% if (not hide_footer) and (not full_bleed) %}
   <footer class="footer">
     <div class="container footer-inner">
       <span>© {{ 2026 }}</span>
       <span class="muted">Single-container FastAPI + Jinja2</span>
     </div>
   </footer>
+  {% endif %}
 </body>
 </html>
