@@ -7,10 +7,59 @@ const inputEl = el("chatInput");
 const sendBtn = el("sendBtn");
 const newChatBtn = el("newChatBtn");
 
+// Sidebar hide/unhide (UI-only)
+const LS_HIDDEN = "llm_code_hidden_sessions_v1";
+let showHidden = false;
+
 // In-memory UI state (sessions + active session)
 let sessions = []; // [{session_id,last_ts,title}]
 let activeSessionId = "";
 let activeMessages = []; // [{role, content, ts?}]
+
+function loadHiddenSet() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_HIDDEN) || "[]");
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenSet(set) {
+  localStorage.setItem(LS_HIDDEN, JSON.stringify(Array.from(set)));
+}
+
+function isHidden(sessionId) {
+  return loadHiddenSet().has(sessionId);
+}
+
+function setHidden(sessionId, hidden) {
+  const s = loadHiddenSet();
+  if (hidden) s.add(sessionId);
+  else s.delete(sessionId);
+  saveHiddenSet(s);
+}
+
+function ensureHiddenToggleButton() {
+  if (!newChatBtn) return;
+  const existing = document.getElementById("toggleHiddenBtn");
+  if (existing) return;
+
+  const btn = document.createElement("button");
+  btn.id = "toggleHiddenBtn";
+  btn.type = "button";
+  btn.className = "btn sidebar";
+  btn.textContent = "Show hidden";
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    showHidden = !showHidden;
+    btn.textContent = showHidden ? "Hide hidden" : "Show hidden";
+    renderChatList(sessions);
+  });
+
+  // Place next to the New chat button
+  newChatBtn.parentElement?.appendChild(btn);
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -53,19 +102,56 @@ function renderMessages(msgs) {
 function renderChatList(list) {
   chatListEl.innerHTML = "";
 
-  (list || [])
+  const hidden = loadHiddenSet();
+  const visibleList = (list || []).filter((s) => showHidden || !hidden.has(s.session_id));
+
+  visibleList
     .slice()
     .sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0))
     .forEach((s) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.alignItems = "center";
+
       const btn = document.createElement("button");
       btn.className =
         "cg-chatitem" + (s.session_id === activeSessionId ? " active" : "");
       btn.type = "button";
-      btn.textContent = (s.title || "Untitled").trim() || "Untitled";
+
+      const title = (s.title || "Untitled").trim() || "Untitled";
+      const isRowHidden = hidden.has(s.session_id);
+      btn.textContent = isRowHidden ? `[hidden] ${title}` : title;
+
       btn.addEventListener("click", () => {
         openSession(s.session_id);
       });
-      chatListEl.appendChild(btn);
+
+      const hideBtn = document.createElement("button");
+      hideBtn.type = "button";
+      hideBtn.className = "btn sidebar";
+      hideBtn.style.padding = "6px 10px";
+      hideBtn.style.borderRadius = "10px";
+      hideBtn.textContent = isRowHidden ? "Unhide" : "Hide";
+      hideBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const nextHidden = !hidden.has(s.session_id);
+        setHidden(s.session_id, nextHidden);
+
+        // If you hid the active session, move focus to newest visible session.
+        if (nextHidden && s.session_id === activeSessionId) {
+          const newestVisible = (sessions || []).filter((x) => !isHidden(x.session_id))[0];
+          if (newestVisible) openSession(newestVisible.session_id);
+        }
+
+        renderChatList(sessions);
+      });
+
+      row.appendChild(btn);
+      row.appendChild(hideBtn);
+      chatListEl.appendChild(row);
     });
 }
 
@@ -93,6 +179,7 @@ async function fetchJson(url) {
 async function loadSessions() {
   const data = await fetchJson("/api/sessions?limit=50");
   sessions = data.sessions || [];
+  ensureHiddenToggleButton();
   renderChatList(sessions);
 
   // If no active session yet, pick the newest. If none exist, create a fresh client id.
