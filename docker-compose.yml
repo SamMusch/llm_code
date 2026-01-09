@@ -29,5 +29,26 @@ services:
       - "127.0.0.1:2024:2024"
     command: langgraph dev --host 0.0.0.0 --port 2024
 
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llm_code_web
+    depends_on:
+      - ollama
+    env_file:
+      - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      BG_JOB_ISOLATED_LOOPS: "true"
+    volumes:
+      - .:/app
+      - ~/.aws:/root/.aws:ro
+    working_dir: /app
+    ports:
+      - "127.0.0.1:8080:8080"
+    # command: python -m app.main
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+
 volumes:
   ollama:
