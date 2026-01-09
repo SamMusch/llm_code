@@ -4,11 +4,12 @@ import os
 import sys
 import uuid
 import logging
+import urllib.parse
 from typing import AsyncIterator
 
 import boto3
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -50,8 +51,6 @@ async def health():
     return {"ok": True}
 
 
-def is_authed(request: Request) -> bool:
-    return request.cookies.get("demo_auth") == "1"
 
 async def llm_stream(messages: list[dict]) -> AsyncIterator[str]:
     """Yield text chunks from the real LangChain/LangGraph agent."""
@@ -82,31 +81,49 @@ async def landing(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/login", response_class=HTMLResponse)
-async def login_get(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
-
-
-@app.post("/login")
-async def login_post(request: Request, email: str = Form(default=""), password: str = Form(default="")):
-    # Stub: accept anything; set a cookie; redirect to /app
-    resp = RedirectResponse(url="/app", status_code=303)
-    resp.set_cookie("demo_auth", "1", httponly=True, samesite="lax")
-    return resp
-
-
-@app.get("/logout")
-async def logout():
-    resp = RedirectResponse(url="/", status_code=303)
-    resp.delete_cookie("demo_auth")
-    return resp
 
 
 @app.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request):
-    if not is_authed(request):
-        return RedirectResponse(url="/login", status_code=303)
+    # Auth is enforced at the ALB listener rule level for /app*
     return templates.TemplateResponse("app.html", {"request": request})
+
+
+
+# ALB+Cognito redirects here after successful auth.
+# We do not need to process the authorization code in the app when ALB is doing
+# authentication. Redirect users to the protected app page.
+@app.get("/oauth2/idpresponse")
+async def oauth2_idpresponse(request: Request):
+    """ALB+Cognito redirects here after successful auth.
+
+    We do not need to process the authorization code in the app when ALB is doing
+    authentication. Redirect users to the protected app page.
+    """
+    return RedirectResponse(url="/app", status_code=302)
+
+
+
+# Log out of ALB session + Cognito hosted UI.
+# ALB uses its own session cookie; clearing it is handled by the ALB listener rule
+# on `/logout*`. We still provide this route so the UI can link to `/logout` and
+# consistently land users back on the site.
+@app.get("/logout")
+async def logout(request: Request):
+    """Log out of ALB session + Cognito hosted UI.
+
+    ALB uses its own session cookie; clearing it is handled by the ALB listener rule
+    on `/logout*`. We still provide this route so the UI can link to `/logout` and
+    consistently land users back on the site.
+    """
+    # Prefer explicit env vars; fall back to known values used in this deployment.
+    domain = os.getenv("COGNITO_DOMAIN", "us-east-1bxivmfrzy.auth.us-east-1.amazoncognito.com")
+    client_id = os.getenv("COGNITO_CLIENT_ID", os.getenv("ALB_COGNITO_CLIENT_ID", "2fje718ip1ntli3jocuta07191"))
+    post_logout = os.getenv("POST_LOGOUT_REDIRECT", "https://chat.sammusch-ds.com/")
+
+    # Cognito logout endpoint
+    qs = urllib.parse.urlencode({"client_id": client_id, "logout_uri": post_logout})
+    return RedirectResponse(url=f"https://{domain}/logout?{qs}", status_code=302)
 
 
 @app.post("/chat")
