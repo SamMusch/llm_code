@@ -50,6 +50,11 @@ templates = Jinja2Templates(directory="app/templates")
 async def health():
     return {"ok": True}
 
+# Alias health check under /api to match ALB routing (/api*)
+@app.get("/api/health")
+async def api_health():
+    return await health()
+
 
 
 async def llm_stream(messages: list[dict]) -> AsyncIterator[str]:
@@ -141,6 +146,11 @@ async def chat_non_stream(request: Request):
     async for chunk in llm_stream([{"role": "user", "content": message}]):
         out.append(chunk)
     return {"text": "".join(out)}
+
+# Alias non-streaming chat under /api to match UI calls (/api/chat)
+@app.post("/api/chat")
+async def api_chat_non_stream(request: Request):
+    return await chat_non_stream(request)
 
 
 def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
@@ -443,3 +453,8 @@ async def chat_stream(request: Request, message: str = "", session_id: str | Non
             "X-Session-Id": sid,
         },
     )
+
+# Alias streaming chat under /api to match UI calls (/api/chat/stream)
+@app.get("/api/chat/stream")
+async def api_chat_stream(request: Request, message: str = "", session_id: str | None = None):
+    return await chat_stream(request, message=message, session_id=session_id)
