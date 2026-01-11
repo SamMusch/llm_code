@@ -6,13 +6,16 @@ import uuid
 import logging
 import urllib.parse
 from typing import AsyncIterator
+from pathlib import Path
 
+import mimetypes
 import boto3
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
 
@@ -44,6 +47,50 @@ def _startup_fail_fast() -> None:
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
+# --- File uploads (UI attachments) ---
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/llm_code_uploads"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))  # 25MB total per request
+MAX_FILE_TEXT_CHARS = int(os.getenv("MAX_FILE_TEXT_CHARS", "20000"))  # cap text injected into context
+
+
+def _safe_filename(name: str) -> str:
+    # Keep it simple: strip path separators and control chars
+    s = (name or "file").replace("\\", "/")
+    s = s.split("/")[-1]
+    s = "".join(ch for ch in s if ch.isprintable())
+    return s[:200] or "file"
+
+
+def _session_upload_dir(session_id: str) -> Path:
+    d = UPLOAD_DIR / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _read_text_best_effort(path: Path, max_chars: int) -> str:
+    """Best-effort text extraction for attachments.
+
+    Current implementation supports plain text-ish files only.
+    PDFs/Office docs are not parsed here.
+    """
+    suffix = path.suffix.lower()
+
+    # Plain text formats
+    if suffix in {".txt", ".md", ".json", ".csv", ".log", ".yaml", ".yml"}:
+        try:
+            data = path.read_bytes()
+            # Try utf-8; fall back to latin-1 to avoid hard failures
+            try:
+                text = data.decode("utf-8")
+            except Exception:
+                text = data.decode("latin-1", errors="replace")
+            return text[:max_chars]
+        except Exception:
+            return ""
+
+    # Unsupported types: keep empty so we don't mislead
+    return ""
+
 
 # Health check endpoint for ALB
 @app.get("/health")
@@ -54,6 +101,61 @@ async def health():
 @app.get("/api/health")
 async def api_health():
     return await health()
+
+
+# --- File uploads endpoint ---
+@app.post("/api/files")
+async def api_upload_files(session_id: str, files: list[UploadFile] = File(...)):
+    """Upload one or more files for a session.
+
+    Returns: {"files": [{"id": "...", "name": "...", "size": 123}]}
+
+    Notes:
+    - Files are stored on local disk under UPLOAD_DIR/session_id.
+    - Only plain-text-ish files are currently injected into chat context.
+    """
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing session_id")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files")
+
+    total = 0
+    out: list[dict] = []
+    dest_dir = _session_upload_dir(session_id)
+
+    for f in files:
+        raw_name = getattr(f, "filename", None) or "file"
+        name = _safe_filename(raw_name)
+        fid = str(uuid.uuid4())
+        dest = dest_dir / f"{fid}__{name}"
+
+        # Stream to disk while enforcing size limits
+        written = 0
+        try:
+            with dest.open("wb") as w:
+                while True:
+                    chunk = await f.read(1024 * 1024)  # 1MB
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        try:
+                            dest.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=413, detail=f"Upload too large (>{MAX_UPLOAD_BYTES} bytes)")
+                    w.write(chunk)
+        finally:
+            try:
+                await f.close()
+            except Exception:
+                pass
+
+        out.append({"id": fid, "name": name, "size": written, "content_type": (f.content_type or "")})
+
+    return {"files": out}
 
 
 
@@ -386,7 +488,12 @@ async def api_get_session(session_id: str, limit: int = 200):
 
 
 @app.get("/chat/stream")
-async def chat_stream(request: Request, message: str = "", session_id: str | None = None):
+async def chat_stream(
+    request: Request,
+    message: str = "",
+    session_id: str | None = None,
+    file_ids: str | None = None,
+):
     msg = (message or "").strip()
     if not msg:
         async def empty() -> AsyncIterator[bytes]:
@@ -407,6 +514,37 @@ async def chat_stream(request: Request, message: str = "", session_id: str | Non
     try:
         past = history.messages
         context_msgs = lc_messages_to_dicts(past)
+
+        # If UI provided file_ids, best-effort inject plain text contents into context.
+        ids: list[str] = []
+        if file_ids:
+            ids = [x.strip() for x in str(file_ids).split(",") if x.strip()]
+
+        if ids:
+            dest_dir = _session_upload_dir(sid)
+            parts: list[str] = []
+            for fid in ids:
+                # Files are stored as {fid}__{name}
+                matches = list(dest_dir.glob(f"{fid}__*"))
+                if not matches:
+                    continue
+
+                p = matches[0]
+                name = p.name.split("__", 1)[-1]
+                text = _read_text_best_effort(p, MAX_FILE_TEXT_CHARS)
+                if not text:
+                    # Don't pretend we parsed unsupported formats
+                    parts.append(f"[Attachment: {name}] (not parsed; unsupported file type)")
+                    continue
+
+                parts.append(f"[Attachment: {name}]\n{text}")
+
+            if parts:
+                injected = "\n\n".join(parts)
+                context_msgs = (
+                    [{"role": "system", "content": "User attached files (best-effort):\n\n" + injected}]
+                    + context_msgs
+                )
     except Exception as e:
         log.exception(f"DDB read FAILED session_id={sid}: {e}")
         context_msgs = [{"role": "user", "content": msg}]
@@ -457,5 +595,25 @@ async def chat_stream(request: Request, message: str = "", session_id: str | Non
 
 # Alias streaming chat under /api to match UI calls (/api/chat/stream)
 @app.get("/api/chat/stream")
-async def api_chat_stream(request: Request, message: str = "", session_id: str | None = None):
-    return await chat_stream(request, message=message, session_id=session_id)
+async def api_chat_stream(
+    request: Request,
+    message: str = "",
+    session_id: str | None = None,
+    file_ids: str | None = None,
+):
+    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids)
+
+
+@app.get("/api/files/{file_id}")
+async def api_get_file(file_id: str, session_id: str):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing session_id")
+
+    dest_dir = _session_upload_dir(session_id)
+    matches = list(dest_dir.glob(f"{file_id}__*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    path = matches[0]
+    mt, _ = mimetypes.guess_type(str(path))
+    return FileResponse(path, media_type=mt or "application/octet-stream")

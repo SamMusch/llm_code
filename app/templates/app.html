@@ -83,7 +83,28 @@
     <!-- Composer -->
     <footer class="border-t border-slate-200 bg-white">
       <div class="mx-auto w-full max-w-3xl px-4 py-3">
+        <!-- Attachments (shows selected/uploaded files) -->
+        <div id="attachmentStrip" class="mb-2 hidden flex flex-wrap gap-2" aria-label="Attachments"></div>
+
         <div class="flex items-end gap-2">
+          <!-- Attach button (ChatGPT-style plus) -->
+          <button
+            id="attachBtn"
+            type="button"
+            class="inline-flex h-[44px] w-[44px] items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 focus:outline-none"
+            aria-label="Attach files"
+            title="Attach files"
+          >
+            +
+          </button>
+          <input
+            id="fileInput"
+            type="file"
+            class="hidden"
+            multiple
+            aria-hidden="true"
+          />
+
           <textarea
             id="chatInput"
             class="min-h-[44px] w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-4 focus:ring-slate-100"

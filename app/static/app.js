@@ -8,6 +8,13 @@ const inputEl = el("chatInput");
 const sendBtn = el("sendBtn");
 const newChatBtn = el("newChatBtn");
 
+// Attachments
+const attachBtn = el("attachBtn");
+const fileInputEl = el("fileInput");
+const attachmentStripEl = el("attachmentStrip");
+
+let pendingAttachments = []; // [{id,name,size}]
+
 // Sidebar + controls
 const sidebarEl = el("sidebar");
 const sidebarToggleEl = el("sidebarToggle");
@@ -290,12 +297,13 @@ function bubble(role, content) {
   const inner = document.createElement("div");
   inner.className =
     "max-w-[85%] rounded-2xl px-4 py-2 text-sm leading-relaxed shadow-sm border " +
-    (isUser
-      ? "bubble-user"
-      : "bg-white text-slate-900 border-slate-200");
+    (isUser ? "bubble-user" : "bg-white text-slate-900 border-slate-200");
 
-  inner.innerHTML = esc(content).replaceAll("\n", "<br/>");
+  const body = document.createElement("div");
+  body.className = "messageBody";
+  body.innerHTML = renderMarkdown(content);
 
+  inner.appendChild(body);
   wrap.appendChild(inner);
   return { wrap, inner };
 }
@@ -361,14 +369,20 @@ function updateLastAssistantBubble(acc) {
   // update the last assistant bubble in-place
   const last = messagesEl.lastElementChild;
   const inner = last?.firstElementChild;
-  if (inner) inner.innerHTML = esc(acc).replaceAll("\n", "<br/>");
+  if (inner) {
+    const body = inner.querySelector?.(".messageBody") || inner;
+    body.innerHTML = renderMarkdown(acc);
+  }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function streamAnswer(userText) {
+function streamAnswer(userText, fileIds = []) {
+  const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
+  const fileParam = ids.length ? `&file_ids=${encodeURIComponent(ids.join(","))}` : "";
+
   const url = `/chat/stream?message=${encodeURIComponent(
     userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}`;
+  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}`;
   const es = new EventSource(url);
 
   let acc = "";
@@ -414,6 +428,8 @@ function sendCurrent() {
   const txt = (inputEl?.value || "").trim();
   if (!txt) return;
 
+  const fileIds = (pendingAttachments || []).map((x) => x.id).filter(Boolean);
+
   inputEl.value = "";
   autosizeTextarea();
 
@@ -427,8 +443,12 @@ function sendCurrent() {
   renderMessages(activeMessages);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
+  // clear attachments after the message is sent
+  pendingAttachments = [];
+  renderAttachmentStrip();
+
   // stream server response (server persists to DynamoDB)
-  streamAnswer(txt);
+  streamAnswer(txt, fileIds);
 }
 
 function nowIso() {
@@ -440,6 +460,105 @@ function esc(s) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function renderMarkdown(md) {
+  // Minimal, safe markdown: escape HTML first, then apply a small subset.
+  let s = esc(md || "");
+
+  // code fences ```...```
+  s = s.replace(/```([\s\S]*?)```/g, (m, code) => {
+    const c = code.replace(/^[\n\r]+|[\n\r]+$/g, "");
+    return `<pre class="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3 overflow-x-auto"><code>${c}</code></pre>`;
+  });
+
+  // inline code `...`
+  s = s.replace(/`([^`]+?)`/g, (m, code) => {
+    return `<code class="rounded bg-slate-100 px-1 py-0.5">${code}</code>`;
+  });
+
+  // bold **...**
+  s = s.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>");
+
+  // italic *...* (simple)
+  s = s.replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, "$1<em>$2</em>");
+
+  // links [text](url)
+  s = s.replace(/\[([^\]]+?)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline">$1</a>'
+  );
+
+  // newlines
+  s = s.replace(/\n/g, "<br/>");
+  return s;
+}
+
+function renderAttachmentStrip() {
+  if (!attachmentStripEl) return;
+  const list = pendingAttachments || [];
+  if (!list.length) {
+    attachmentStripEl.classList.add("hidden");
+    attachmentStripEl.innerHTML = "";
+    return;
+  }
+
+  attachmentStripEl.classList.remove("hidden");
+  attachmentStripEl.innerHTML = "";
+
+  list.forEach((f) => {
+    const chip = document.createElement("div");
+    chip.className = "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-900";
+
+    const name = document.createElement("span");
+    name.className = "max-w-[220px] truncate";
+    name.textContent = f.name || "file";
+
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "h-5 w-5 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+    x.textContent = "×";
+    x.setAttribute("aria-label", "Remove attachment");
+    x.addEventListener("click", () => {
+      pendingAttachments = (pendingAttachments || []).filter((a) => a.id !== f.id);
+      renderAttachmentStrip();
+    });
+
+    chip.appendChild(name);
+    chip.appendChild(x);
+    attachmentStripEl.appendChild(chip);
+  });
+}
+
+async function uploadSelectedFiles(fileList) {
+  const files = Array.from(fileList || []).filter(Boolean);
+  if (!files.length) return;
+
+  const fd = new FormData();
+  files.forEach((file) => fd.append("files", file, file.name));
+
+  const url = `/api/files?session_id=${encodeURIComponent(activeSessionId)}`;
+  const r = await fetch(url, {
+    method: "POST",
+    body: fd,
+    credentials: "same-origin",
+  });
+
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`${r.status} ${r.statusText} ${t}`);
+  }
+
+  const data = await r.json();
+  const returned = Array.isArray(data.files) ? data.files : [];
+
+  // merge (avoid duplicates by id)
+  const byId = new Map((pendingAttachments || []).map((x) => [x.id, x]));
+  returned.forEach((f) => {
+    if (!f || !f.id) return;
+    byId.set(f.id, { id: f.id, name: f.name || "file", size: f.size || 0 });
+  });
+  pendingAttachments = Array.from(byId.values());
+  renderAttachmentStrip();
 }
 
 function renderProjects() {
@@ -486,6 +605,8 @@ newChatBtn?.addEventListener("click", async () => {
   // It will appear in DynamoDB after the first message is sent.
   activeSessionId = newSessionId();
   activeMessages = [];
+  pendingAttachments = [];
+  renderAttachmentStrip();
   setHeaderTitle();
   renderChatList(sessions);
   renderMessages(activeMessages);
@@ -502,6 +623,22 @@ chatSearchEl?.addEventListener("input", () => {
 });
 
 sendBtn?.addEventListener("click", sendCurrent);
+
+attachBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  fileInputEl?.click();
+});
+
+fileInputEl?.addEventListener("change", async () => {
+  try {
+    await uploadSelectedFiles(fileInputEl.files);
+  } catch (err) {
+    alert("Upload failed: " + (err?.message || err));
+  } finally {
+    // allow picking the same file again
+    if (fileInputEl) fileInputEl.value = "";
+  }
+});
 
 inputEl?.addEventListener("input", autosizeTextarea);
 
