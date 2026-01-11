@@ -34,7 +34,8 @@ const themeLabelEl = el("themeLabel");
 
 // Local settings
 const LS_THEME = "llm_code_theme";            // legacy: slate|blue|emerald
-const LS_APPEARANCE = "llm_code_appearance";  // light|dark|system
+// Appearance is forced to light mode (no user option)
+const LS_APPEARANCE = "llm_code_appearance";  // legacy; no longer used
 const LS_BG = "llm_code_bg";                  // legacy: matching|gray
 
 // New preferences (color wheels)
@@ -521,49 +522,23 @@ function setActiveChoice(buttons, predicate) {
 }
 
 function getSystemMode() {
-  try {
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  } catch {
-    return "light";
-  }
+  return "light";
 }
 
-function applyAppearance(pref) {
-  const p = (pref || "").trim() || "system";
-
-  // store the user preference (light/dark/system)
-  try { localStorage.setItem(LS_APPEARANCE, p); } catch {}
-
-  // track preference + effective mode
-  const mode = p === "system" ? getSystemMode() : p;
-  document.documentElement.dataset.appearance = p;
-  document.documentElement.dataset.mode = mode; // effective (light|dark)
-
-  // help native form controls match
+function applyAppearance(_pref) {
+  const mode = "light";
+  document.documentElement.dataset.appearance = "light";
+  document.documentElement.dataset.mode = mode;
   document.documentElement.style.colorScheme = mode;
 
-  // if pref is system, keep it live
+  // remove any previous system listener
   if (systemMq) {
     try { systemMq.onchange = null; } catch {}
     systemMq = null;
   }
-  if (p === "system") {
-    try {
-      systemMq = window.matchMedia("(prefers-color-scheme: dark)");
-      systemMq.onchange = () => {
-        const m = getSystemMode();
-        document.documentElement.dataset.mode = m;
-        document.documentElement.style.colorScheme = m;
-      };
-    } catch {
-      // ignore
-    }
-  }
 
-  // reflect selection state in the menu if present
-  setActiveChoice(document.querySelectorAll(".appearanceOpt"), (b) => (b.dataset.appearance || "") === p);
+  // ensure any leftover UI buttons don't show as active
+  setActiveChoice(document.querySelectorAll(".appearanceOpt"), () => false);
 }
 
 function applyBackground(bg) {
@@ -644,7 +619,7 @@ function closeSettingsModal() {
 function initSettingsModal() {
   // initialize legacy settings (theme/appearance/bg)
   const curTheme = (() => { try { return localStorage.getItem(LS_THEME) || "slate"; } catch { return "slate"; } })();
-  const curAppearance = (() => { try { return localStorage.getItem(LS_APPEARANCE) || "system"; } catch { return "system"; } })();
+  const curAppearance = "light";
   const curBg = (() => { try { return localStorage.getItem(LS_BG) || "matching"; } catch { return "matching"; } })();
   applyTheme(curTheme);
   applyAppearance(curAppearance);
@@ -680,15 +655,6 @@ function initSettingsModal() {
     if (e.key === "Escape") closeSettingsModal();
   });
 
-  // appearance buttons inside modal
-  document.querySelectorAll(".appearanceOpt").forEach((b) => {
-    b.addEventListener("click", (e) => {
-      e.preventDefault();
-      const p = b.dataset.appearance || "system";
-      applyAppearance(p);
-    });
-  });
-
   // color pickers persistence
   accentPickerEl?.addEventListener("input", () => {
     const v = accentPickerEl.value;
@@ -709,7 +675,7 @@ function initSettingsModal() {
       if (themeLabelEl) themeLabelEl.textContent = "Gray";
     }
   });
-chatBgPickerEl?.addEventListener("input", () => {
+  chatBgPickerEl?.addEventListener("input", () => {
     const v = chatBgPickerEl.value;
     try { localStorage.setItem(LS_CHAT_BG, v); } catch {}
     document.documentElement.style.setProperty("--chat-bg", v);
