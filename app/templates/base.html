@@ -4,9 +4,47 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ title if title else "Site" }}</title>
+  <!-- UI stack: Tailwind + Flowbite + HTMX (UI-only; keeps existing FastAPI wiring) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    (function () {
+      try {
+        const theme = localStorage.getItem("llm_code_theme") || "slate";
+        const accent = localStorage.getItem("llm_code_accent_hex") || "#a281ee";
+        const toggleBg = localStorage.getItem("llm_code_toggle_bg_hex") || "#eef5ff";
+        const chatBg = localStorage.getItem("llm_code_chat_bg_hex") || "#ffffff";
+        const appearance = localStorage.getItem("llm_code_appearance") || "system"; // light|dark|system
+        const bg = localStorage.getItem("llm_code_bg") || "matching"; // matching|gray
+
+        const systemMode = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+          ? "dark"
+          : "light";
+        const mode = (appearance === "system") ? systemMode : appearance;
+
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.appearance = appearance;
+        document.documentElement.dataset.mode = mode;
+        document.documentElement.dataset.bg = bg;
+        // Apply user color-wheel preferences early (used by site.css)
+        document.documentElement.style.setProperty("--accent", accent);
+        document.documentElement.style.setProperty("--toggle-bg", toggleBg);
+        document.documentElement.style.setProperty("--chat-bg", chatBg);
+        document.documentElement.style.colorScheme = mode;
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="https://unpkg.com/flowbite@latest/dist/flowbite.min.css" />
+
+  <script defer src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
+  <script defer src="https://unpkg.com/hyperscript.org@0.9.12"></script>
+
+  <!-- Your existing CSS stays as the override layer -->
   <link rel="stylesheet" href="/static/site.css" />
+
+  {% block head_extra %}{% endblock %}
 </head>
-<body class="{% if full_bleed %}full-bleed{% endif %}">
+<body class="min-h-screen bg-slate-50 text-slate-900 {% if full_bleed %}full-bleed{% endif %}">
   {% if (not hide_topbar) and (not full_bleed) %}
   <header class="topbar">
     <div class="container topbar-inner">
@@ -19,7 +57,7 @@
   </header>
   {% endif %}
 
-  <main class="{{ 'app-container' if full_bleed else 'container' }}">
+  <main class="{% if full_bleed %}w-full h-screen overflow-hidden{% else %}container{% endif %}">
     {% block content %}{% endblock %}
   </main>
 
@@ -31,5 +69,6 @@
     </div>
   </footer>
   {% endif %}
+  <script defer src="https://unpkg.com/flowbite@latest/dist/flowbite.min.js"></script>
 </body>
 </html>

@@ -1,123 +1,205 @@
-:root { --pad: 16px; --radius: 14px; }
-* { box-sizing: border-box; }
-html, body { height: 100%; }
-a { text-decoration: none; color: inherit; }
-body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+:root{
+  /* User preferences (defaults requested) */
+  --accent: #a281ee;      /* rgb(162,129,238) */
+  --toggle-bg: #eef5ff;   /* rgb(238,245,255) */
+  --chat-bg: #ffffff;     /* rgb(255,255,255) */
+
+  /* Derived primary tokens */
+  --primary: var(--accent);
+  --primaryHover: color-mix(in srgb, var(--accent) 85%, #000);
+  --ring: color-mix(in srgb, var(--accent) 25%, transparent);
+
+
+/* Fallback tokens (used if data-mode not set yet) */
+--bg-page: #f8fafc;        /* slate-50 */
+--bg-panel: #ffffff;
+--bg-sidebar: #ffffff;
+--border: #e5e7eb;         /* slate-200 */
+--text-main: #0f172a;      /* slate-900 */
+--text-muted: #64748b;     /* slate-500 */
+}
+html[data-theme="blue"]{
+  --accent:#2563eb;        /* blue-600 */
+}
+html[data-theme="emerald"]{
+  --accent:#059669;        /* emerald-600 */
+}
+
+/* ==============================
+   Appearance (light / dark / system)
+   app.js sets:
+   - html[data-appearance] = light | dark | system
+   - html[data-mode] = effective light | dark
+   ============================== */
+
+/* Light mode tokens */
+html[data-mode="light"]{
+  --bg-page: #f8fafc;        /* slate-50 */
+  --bg-panel: #ffffff;
+  --bg-sidebar: #ffffff;
+  --border: #e5e7eb;         /* slate-200 */
+  --text-main: #0f172a;      /* slate-900 */
+  --text-muted: #64748b;     /* slate-500 */
+}
+
+/* Dark mode tokens */
+html[data-mode="dark"]{
+  --bg-page: #0b1220;        /* near slate-950 */
+  --bg-panel: #0f172a;       /* slate-900 */
+  --bg-sidebar: #020617;     /* slate-950 */
+  --border: #1e293b;         /* slate-800 */
+  --text-main: #e5e7eb;      /* slate-200 */
+  --text-muted: #94a3b8;     /* slate-400 */
+  --chat-bg: #0f172a;        /* default chat bg in dark unless user overrides */
+}
+
+/* ==============================
+   Background style (matching / gray)
+   app.js sets html[data-bg]
+   ============================== */
+
+/* Matching = panels inherit user chat background */
+html[data-bg="matching"]{
+  --bg-chat: var(--chat-bg);
+}
+
+/* Gray = neutral gray chat background like ChatGPT */
+html[data-bg="gray"]{
+  --bg-chat: var(--toggle-bg);
+}
+
+/* Dark + gray combo */
+html[data-mode="dark"][data-bg="gray"]{
+  --bg-chat: #020617;        /* slate-950 */
+}
+
+/* ==============================
+   Apply tokens to app layout
+   ============================== */
+
+/* Page + panels */
+html[data-mode] body{ background: var(--bg-page); color: var(--text-main); }
+
+aside[aria-label="Sidebar"]{
+  background: var(--bg-sidebar) !important;
+  color: var(--text-main);
+}
+
+header, footer{
+  background: var(--bg-panel) !important;
+  border-color: var(--border) !important;
+}
+
+/* Chat surface */
+#chatMessages{
+  background: var(--bg-chat);
+}
+
+/* Assistant bubbles */
+#chatMessages .bg-white{
+  background: var(--bg-panel) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border) !important;
+}
+
+/* Borders + muted text */
+.border-slate-200{ border-color: var(--border) !important; }
+.text-slate-500{ color: var(--text-muted) !important; }
+
+/* Preserve full-bleed behavior used by base.html */
 body.full-bleed { overflow: hidden; }
-a { text-decoration: none; color: inherit; }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-.container { max-width: 1040px; margin: 0 auto; padding: 0 var(--pad); }
-
-.topbar { border-bottom: 1px solid #e7e7e7; }
-.topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
-.brand { font-weight: 650; }
-.nav a { margin-left: 12px; color: #333; }
-
-.footer { margin-top: 48px; border-top: 1px solid #e7e7e7; }
-.footer-inner { display: flex; justify-content: space-between; padding: 18px var(--pad); }
-
-.muted { color: #666; }
-.small { font-size: 12px; }
-
-.btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; border-radius: 999px; border: 1px solid #d9d9d9; background: white; cursor: pointer; }
-.btn.primary { border-color: #111; background: #111; color: white; }
-.cta-row { display: flex; gap: 10px; margin-top: 14px; }
-
-.hero { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; padding: 34px 0; }
-.hero .lead { color: #444; line-height: 1.5; }
-.hero-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
-.metric { border: 1px solid #eee; border-radius: var(--radius); padding: 12px; }
-.metric-num { font-weight: 650; }
-.metric-label { color: #666; font-size: 13px; margin-top: 4px; }
-
-.mock { border: 1px solid #eee; border-radius: var(--radius); overflow: hidden; }
-.mock-header { padding: 10px 12px; border-bottom: 1px solid #eee; font-weight: 600; }
-.mock-body { padding: 14px 12px; }
-.mock-line { height: 10px; background: #eee; border-radius: 8px; margin-bottom: 10px; }
-.mock-line.short { width: 70%; }
-
-.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-bottom: 8px; }
-.card { border: 1px solid #eee; border-radius: var(--radius); padding: 14px; }
-.card h3 { margin: 0 0 6px 0; }
-
-.panel { max-width: 520px; margin: 26px auto; border: 1px solid #eee; border-radius: var(--radius); padding: 18px; }
-.form { display: grid; gap: 12px; margin-top: 12px; }
-label span { display: block; font-size: 13px; color: #444; margin-bottom: 6px; }
-input { width: 100%; padding: 10px 12px; border: 1px solid #d9d9d9; border-radius: 10px; }
-
-.app-shell { padding-top: 18px; }
-.app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.chat { border: 1px solid #eee; border-radius: var(--radius); padding: 14px; }
-.chat-log { height: 360px; overflow: auto; padding: 10px; border: 1px solid #eee; border-radius: 10px; background: #fafafa; }
-.chat-input { display: flex; gap: 10px; margin-top: 12px; }
-.chat-input input { flex: 1; }
-
-@media (max-width: 900px) {
-  .hero { grid-template-columns: 1fr; }
-  .cards { grid-template-columns: 1fr; }
-  .hero-metrics { grid-template-columns: 1fr; }
+/* Primary button helper (used in app.html) */
+.btn-primary{
+  background: var(--primary);
+  color: #fff;
 }
-/* Full-bleed container for app shell */
-.app-container { max-width: none; padding: 0; }
-body.full-bleed .app-container { height: 100vh; }
+.btn-primary:hover{ background: var(--primaryHover); }
+.btn-primary:focus-visible{ box-shadow: 0 0 0 4px var(--ring); }
 
-/* ChatGPT-like shell */
-.cg {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  height: 100vh;
-  overflow: hidden;        /* prevent page from growing */
+/* State helpers used by app.js */
+.chatitem-active{
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: #fff !important;
 }
-.cg-sidebar {
-  border-right: 1px solid #e7e7e7;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;           /* allow inner scroller to work */
+.bubble-user{
+  background: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: #fff !important;
 }
-.cg-sidebar-top { display: flex; gap: 10px; }
-.btn.sidebar { padding: 10px 12px; border-radius: 12px; border: 1px solid #e2e2e2; background: #fff; cursor: pointer; }
-.cg-chatlist {
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-right: 4px;
-  min-height: 0;           /* allow it to shrink inside sidebar */
-}
-.cg-chatitem { text-align: left; padding: 10px 10px; border-radius: 12px; border: 1px solid transparent; background: transparent; cursor: pointer; }
-.cg-chatitem:hover { border-color: #e2e2e2; background: #fafafa; }
-.cg-chatitem.active { border-color: #d9d9d9; background: #f5f5f5; }
 
-.cg-main {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  min-height: 0;           /* critical: lets messages become the scroller */
-}
-.cg-header { padding: 14px 18px; border-bottom: 1px solid #e7e7e7; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.cg-title { font-weight: 650; }
-.cg-messages {
-  flex: 1 1 auto;
-  min-height: 0;           /* critical */
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 18px;
-  background: #fff;
-}
-.cg-msg { display: flex; margin-bottom: 14px; }
-.cg-msg.user { justify-content: flex-end; }
-.cg-bubble { max-width: 820px; padding: 12px 14px; border-radius: 14px; border: 1px solid #e7e7e7; background: #fafafa; line-height: 1.35; white-space: normal; }
-.cg-msg.user .cg-bubble { background: #fff; }
+/* Ensure the chat area can scroll within the viewport */
+#chatMessages{ overflow-anchor: none; }
 
-.cg-composer { border-top: 1px solid #e7e7e7; padding: 14px 18px; display: flex; gap: 10px; align-items: flex-end; }
-.cg-composer textarea { flex: 1; resize: none; padding: 10px 12px; border: 1px solid #d9d9d9; border-radius: 14px; font-family: inherit; font-size: 14px; line-height: 1.35; max-height: 160px; }
-.cg-composer .btn.primary { padding: 10px 14px; border-radius: 14px; }
+/* Keep code blocks readable inside messages */
+#chatMessages code{
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
-@media (max-width: 900px) {
-  .cg { grid-template-columns: 1fr; }
-  .cg-sidebar { display: none; }
-  .cg-main { height: 100vh; }
+
+/* ==============================
+   Sidebar collapsed (desktop)
+   app.js toggles .sidebar-collapsed on #sidebar
+   ============================== */
+
+#sidebar.sidebar-collapsed{
+  width: 64px !important;
+  min-width: 64px !important;
+}
+
+#sidebar.sidebar-collapsed .px-4,
+#sidebar.sidebar-collapsed .px-3,
+#sidebar.sidebar-collapsed .p-3,
+#sidebar.sidebar-collapsed .p-4{
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+#sidebar.sidebar-collapsed #chatSearch,
+#sidebar.sidebar-collapsed #projectList,
+#sidebar.sidebar-collapsed #themeLabel,
+#sidebar.sidebar-collapsed a[href="/logout"]{
+  display: none !important;
+}
+
+/* Collapse: hide most text labels and section headers */
+#sidebar.sidebar-collapsed .text-xs,
+#sidebar.sidebar-collapsed .text-sm{
+  display: none !important;
+}
+
+#sidebar.sidebar-collapsed #newChatBtn{
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Harden the hover-only 3-dots visibility */
+.chatMenuBtn{ display: none; }
+.group:hover .chatMenuBtn{ display: inline-flex; }
+
+/* ==============================
+   Settings modal readability
+   ============================== */
+
+#settingsModal{
+  color: var(--text-main);
+}
+
+#settingsModal *{
+  color: inherit;
+}
+#settingsModal .text-slate-500{ color: var(--text-muted) !important; }
+
+#settingsModal .bg-white{
+  background: var(--bg-panel) !important;
+  color: var(--text-main) !important;
+}
+
+#settingsModal select,
+#settingsModal input[type="text"],
+#settingsModal input[type="search"]{
+  background: var(--bg-panel) !important;
+  color: var(--text-main) !important;
+  border-color: var(--border) !important;
 }

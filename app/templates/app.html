@@ -1,28 +1,159 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="cg">
-  <aside class="cg-sidebar">
-    <div class="cg-sidebar-top">
-      <button id="newChatBtn" class="btn sidebar">New chat</button>
-      <a class="btn sidebar" href="/logout">Logout</a>
+<div class="flex h-full w-full overflow-hidden">
+  <!-- Mobile top bar (hamburger) -->
+  <div class="md:hidden fixed top-0 left-0 right-0 z-20 flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
+    <button id="sidebarToggle" type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Open sidebar">
+      <!-- hamburger -->
+      <span class="block h-[2px] w-5 bg-slate-900"></span>
+      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
+      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
+    </button>
+    <div class="min-w-0 flex-1">
+      <div class="truncate text-sm font-semibold" id="mobileTitle">Chat</div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 hidden w-[22vw] min-w-[260px] max-w-[360px] flex-col border-r border-slate-200 bg-white md:static md:flex" aria-label="Sidebar">
+    <!-- Sidebar header -->
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+      <div class="text-sm font-semibold">Controls</div>
+      <button id="sidebarClose" type="button" class="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Close sidebar">×</button>
     </div>
 
-    <div class="cg-chatlist" id="chatList" aria-label="Chats"></div>
+    <!-- Section 1: Controls -->
+    <div class="px-4 py-3 border-b border-slate-200">
+      <button id="newChatBtn" class="w-full inline-flex items-center justify-center rounded-lg btn-primary px-4 py-2 text-sm font-medium focus:outline-none">
+        New chat
+      </button>
+      <div class="mt-2">
+        <input id="chatSearch" type="search" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="Search chats" />
+      </div>
+    </div>
+
+    <!-- Section 2: Projects -->
+    <div class="px-4 py-3 border-b border-slate-200">
+      <div class="flex items-center justify-between">
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Projects</div>
+        <button id="newProjectBtn" type="button" class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium hover:bg-slate-50">New</button>
+      </div>
+      <div id="projectList" class="mt-2 space-y-1" aria-label="Projects"></div>
+    </div>
+
+    <!-- Section 3: Conversations -->
+    <div class="flex-1 overflow-hidden">
+      <div class="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Conversations</div>
+      <div class="h-full overflow-y-auto px-2 pb-4">
+        <div id="chatList" class="space-y-1" aria-label="Chats"></div>
+      </div>
+    </div>
+
+    <!-- Section 4: Settings -->
+    <div class="mt-auto border-t border-slate-200 p-3">
+      <button id="settingsModalBtn" type="button" class="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50">
+        <span class="font-medium">Settings</span>
+        <span id="themeLabel" class="text-xs text-slate-500">Slate</span>
+      </button>
+      <a class="mt-2 w-full inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50" href="/logout">Logout</a>
+    </div>
   </aside>
 
-  <section class="cg-main">
-    <header class="cg-header">
-      <div class="cg-title" id="chatTitle">New chat</div>
-      <div class="cg-subtitle muted small">SSE: <code>/chat/stream</code></div>
+  <!-- Mobile sidebar backdrop -->
+  <div id="sidebarBackdrop" class="fixed inset-0 z-20 hidden bg-black/30 md:hidden" aria-hidden="true"></div>
+
+  <!-- Main -->
+  <main class="flex min-w-0 flex-1 flex-col bg-slate-50 pt-12 md:pt-0" aria-label="Chat">
+    <!-- Header -->
+    <header class="sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur">
+      <div class="flex items-center gap-3 px-4 py-3">
+        <button id="sidebarToggleDesktop" type="button" class="hidden md:inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Toggle sidebar">☰</button>
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-sm font-semibold text-slate-900" id="chatTitle">New chat</div>
+          <div class="text-xs text-slate-500">Streaming via <code class="rounded bg-slate-100 px-1 py-0.5">/chat/stream</code></div>
+        </div>
+      </div>
     </header>
 
-    <div id="chatMessages" class="cg-messages" aria-label="Messages"></div>
+    <!-- Thread -->
+    <section class="flex-1 overflow-y-auto" aria-label="Messages">
+      <div id="chatMessages" class="mx-auto w-full max-w-3xl px-4 py-6 space-y-4"></div>
+    </section>
 
-    <div class="cg-composer">
-      <textarea id="chatInput" rows="1" placeholder="Message..." aria-label="Message"></textarea>
-      <button id="sendBtn" class="btn primary">Send</button>
+    <!-- Composer -->
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto w-full max-w-3xl px-4 py-3">
+        <div class="flex items-end gap-2">
+          <textarea
+            id="chatInput"
+            class="min-h-[44px] w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-4 focus:ring-slate-100"
+            rows="1"
+            placeholder="Message..."
+            aria-label="Message"
+          ></textarea>
+          <button id="sendBtn" class="inline-flex h-[44px] items-center justify-center rounded-lg btn-primary px-4 text-sm font-medium focus:outline-none">
+            Send
+          </button>
+        </div>
+        <div class="mt-2 text-xs text-slate-500">Shift+Enter for newline • Enter to send</div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<!-- Settings modal (HTML scaffold; behavior wired in app.js) -->
+<div id="settingsModal" class="fixed inset-0 z-40 hidden" aria-hidden="true">
+  <div class="absolute inset-0 bg-black/30" data-close="settings"></div>
+  <div class="absolute left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-xl">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+      <div class="text-sm font-semibold">Settings</div>
+      <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" data-close="settings" aria-label="Close">×</button>
     </div>
-  </section>
+
+    <div class="max-h-[70vh] overflow-y-auto p-4 space-y-6 text-slate-900">
+      <!-- Sub-section 1: Models -->
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Models</div>
+        <select id="modelSelect" class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+          <option value="default">Default</option>
+        </select>
+      </div>
+
+      <!-- Sub-section 2: Preferences -->
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Preferences</div>
+        <div class="mt-3 grid grid-cols-1 gap-3">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm">Accent</div>
+            <input id="accentPicker" type="color" value="#a281ee" />
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm">Appearance</div>
+            <div class="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+              <button type="button" class="appearanceOpt px-3 py-2 text-xs" data-appearance="light">Light</button>
+              <button type="button" class="appearanceOpt px-3 py-2 text-xs" data-appearance="dark">Dark</button>
+              <button type="button" class="appearanceOpt px-3 py-2 text-xs" data-appearance="system">System</button>
+            </div>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm">Toggle background</div>
+            <input id="toggleBgPicker" type="color" value="#eef5ff" />
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm">Chat background</div>
+            <input id="chatBgPicker" type="color" value="#ffffff" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-section 3: Tasks -->
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tasks</div>
+        <button id="scheduleTaskBtn" type="button" class="mt-2 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50">Schedule a task</button>
+        <div id="taskList" class="mt-3 space-y-2"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="/static/app.js"></script>

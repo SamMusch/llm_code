@@ -91,7 +91,8 @@ async def landing(request: Request):
 @app.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request):
     # Auth is enforced at the ALB listener rule level for /app*
-    return templates.TemplateResponse("app.html", {"request": request})
+    # full_bleed lets the chat UI take the full viewport (no outer container/topbar spacing).
+    return templates.TemplateResponse("app.html", {"request": request, "full_bleed": True})
 
 
 
