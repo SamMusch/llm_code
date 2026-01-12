@@ -44,8 +44,10 @@ def _startup_fail_fast() -> None:
         sys.exit(1)
 
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # --- File uploads (UI attachments) ---
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/llm_code_uploads"))
