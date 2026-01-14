@@ -13,7 +13,7 @@ rag:
 
   llm:
     provider: "ollama" # "openai"
-    model: "llama3.2:1b" # "gpt-4o-mini"
+    model: "qwen2.5:3b" #  "llama3.2:1b" # "gpt-4o-mini"
     base_url: "http://ollama:11434" # service name
 
   embedding:
@@ -26,3 +26,8 @@ rag:
     max_retries: 3
     hallucination_guard: true
     max_context_chars: 60000
+
+  postgres:
+    uri: null
+    # Restrict visibility to this schema (DB-level enforcement already applied)
+    schema: "llm_code"

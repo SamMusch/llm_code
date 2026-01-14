@@ -8,6 +8,53 @@ from pathlib import Path
 from .config import Settings
 from langchain.tools import tool
 from .retriever import load_retriever, build_index
+import os
+
+
+def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
+    """Return a SQLAlchemy-compatible Postgres URI, if configured."""
+    # Prefer explicit env var so local/dev/prod can share the same code.
+    uri = os.environ.get("POSTGRES_URI") or os.environ.get("DATABASE_URL")
+    if uri:
+        return uri
+
+    # Optional: allow passing via Settings if you later add a field.
+    if cfg is not None and hasattr(cfg, "postgres_uri"):
+        v = getattr(cfg, "postgres_uri")
+        return v if isinstance(v, str) and v else None
+
+    return None
+
+
+def get_sql_database_tools(llm, cfg: Settings | None = None):
+    """Build LangChain SQLDatabaseToolkit tools for the configured Postgres DB.
+
+    This follows LangChain's SQLDatabase toolkit pattern.
+    If Postgres isn't configured, returns an empty list.
+    """
+    uri = _get_postgres_uri(cfg)
+    if not uri:
+        return []
+
+    # Local import so Postgres deps are optional unless enabled.
+    from langchain_community.utilities.sql_database import SQLDatabase
+    from langchain_community.agent_toolkits import SQLDatabaseToolkit
+
+    # Schema scoping (preferred). DB-level enforcement should also be applied.
+    schema = os.environ.get("POSTGRES_SCHEMA")
+    if not schema and cfg is not None and hasattr(cfg, "postgres_schema"):
+        v = getattr(cfg, "postgres_schema")
+        schema = v if isinstance(v, str) and v else None
+
+    # Avoid LangChain/psycopg issue when `schema=` triggers `SET search_path TO %s`.
+    # Instead, set search_path at connection time via libpq options.
+    engine_args = {}
+    if schema:
+        engine_args = {"connect_args": {"options": f"-csearch_path={schema}"}}
+
+    db = SQLDatabase.from_uri(uri, engine_args=engine_args)
+    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+    return toolkit.get_tools()
 
 
 @tool

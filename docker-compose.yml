@@ -21,6 +21,9 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       BG_JOB_ISOLATED_LOOPS: "true"
       LANGGRAPH_BASE_URL: http://127.0.0.1:2024
+      # Postgres runtime SQL tools
+      POSTGRES_URI: ${POSTGRES_URI}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
     volumes:
       - .:/app
       - ~/.aws:/root/.aws:ro
@@ -41,6 +44,9 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       BG_JOB_ISOLATED_LOOPS: "true"
+      # Postgres runtime SQL tools
+      POSTGRES_URI: ${POSTGRES_URI}
+      POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
     volumes:
       - .:/app
       - ~/.aws:/root/.aws:ro

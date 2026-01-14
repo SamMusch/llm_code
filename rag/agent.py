@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 
 from .config import Settings, get_settings
-from .tools import search_docs, rebuild_index
+from .tools import search_docs, rebuild_index, get_sql_database_tools
 
 try:
     from retrieval_graph.tools import read_doc_by_name as READ_DOC_TOOL
@@ -18,9 +18,12 @@ except ImportError:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
 SYSTEM_PROMPT = (
-    "You are a retrieval-augmented assistant over the user's local documents. "
-    "Use the tools to search, read, or reindex documents as needed. "
-    "Prefer `search_docs` for normal lookups."
+    "You are an assistant with TWO data sources: (1) documents (eg .md, .pptx, .xlsx) and (2) a Postgres database. "
+    "Use document tools (search_docs, read_doc_by_name, rebuild_index) ONLY for questions about documents. "
+    "Use SQL tools (sql_db_list_tables, sql_db_schema, sql_db_query) for questions about campaigns, metrics, tables, schema, or performance data. "
+    "If the user asks to list available tables, you MUST call sql_db_list_tables. "
+    "If the user asks about a specific table, you MUST call sql_db_schema for that table before querying it. "
+    "Prefer SQL tools over document tools when the question mentions Postgres, pgAdmin, schema, tables, campaigns, clicks, or spend."
 )
 
 # ----
@@ -88,8 +91,6 @@ def get_agent(cfg: Settings | None = None):
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 
-    tools = [search_docs, rebuild_index, READ_DOC_TOOL]
-
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(model=model_name)
@@ -106,7 +107,7 @@ def get_agent(cfg: Settings | None = None):
         llm = ChatBedrock(
             client=bedrock_runtime,
             model_id=model_name,
-        ).bind_tools(tools)
+        )
     
     #elif provider == "ollama":
     #    from langchain_ollama import ChatOllama
@@ -118,7 +119,7 @@ def get_agent(cfg: Settings | None = None):
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-        ).bind_tools(tools)
+        )
     else:
         # Fallback for compatible providers or raise error
         try:
@@ -127,6 +128,12 @@ def get_agent(cfg: Settings | None = None):
         except Exception:
             raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
 
+    # Build tool list (docs + runtime SQL) and bind them to the model
+    tools = [search_docs, rebuild_index, READ_DOC_TOOL]
+    tools += get_sql_database_tools(llm, cfg)
+    llm = llm.bind_tools(tools)
+
+    print("TOOLS:", [t.name for t in tools])
     agent = _lc_create_agent(
         model=llm,
         tools=tools,

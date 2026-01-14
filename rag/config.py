@@ -28,6 +28,10 @@ class Settings(BaseModel):
     hallucination_guard: bool
     max_context_chars: int
 
+    # postgres (runtime SQL tools)
+    postgres_uri: str | None = None
+    postgres_schema: str | None = None
+
     @classmethod
     def load(cls):
         # 1. Load YAML configuration first
@@ -56,7 +60,11 @@ class Settings(BaseModel):
 
             "runtime.max_retries":      ("max_retries", None),      # runtime
             "runtime.hallucination_guard": ("hallucination_guard", None),
-            "runtime.max_context_chars":   ("max_context_chars", None),}
+            "runtime.max_context_chars":   ("max_context_chars", None),
+
+            "postgres.uri":         ("postgres_uri", None),
+            "postgres.schema":      ("postgres_schema", None),
+        }
         for dotted_key, (env_key, cast) in unified_mapping.items():
             section, key = dotted_key.split(".")
             section_data = yaml_data.get(section, {})
@@ -73,6 +81,8 @@ class Settings(BaseModel):
             "LLM_MODEL":       ("llm_model", str),     # 260102 for aws 
             "LLM_BASE_URL":    ("llm_base_url", str),
             "EMBEDDING_MODEL": ("embedding_model", str),
+            "POSTGRES_URI":    ("postgres_uri", str),
+            "POSTGRES_SCHEMA": ("postgres_schema", str),
         }
         for env_var, (env_key, cast) in env_override_mapping.items():
             if env_var in os.environ:
