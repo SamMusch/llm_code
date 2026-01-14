@@ -18,12 +18,14 @@ except ImportError:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
 SYSTEM_PROMPT = (
-    "You are an assistant with TWO data sources: (1) documents (eg .md, .pptx, .xlsx) and (2) a Postgres database. "
-    "Use document tools (search_docs, read_doc_by_name, rebuild_index) ONLY for questions about documents. "
-    "Use SQL tools (sql_db_list_tables, sql_db_schema, sql_db_query) for questions about campaigns, metrics, tables, schema, or performance data. "
-    "If the user asks to list available tables, you MUST call sql_db_list_tables. "
-    "If the user asks about a specific table, you MUST call sql_db_schema for that table before querying it. "
-    "Prefer SQL tools over document tools when the question mentions Postgres, pgAdmin, schema, tables, campaigns, clicks, or spend."
+    "You are an assistant with TWO data sources: (1) documents (md, pptx, xlsx, pdf) and (2) a Postgres database. "
+    "For database questions you MUST use tools and you MUST NOT answer from memory. "
+    "When the user asks about campaigns, metrics, spend, clicks, performance, tables, schema, or pgAdmin: "
+    "(a) call sql_db_list_tables if the question is about what tables exist, "
+    "(b) call sql_db_schema(table_names=...) before any query if you need columns, and "
+    "(c) call sql_db_query(query=...) to compute the answer. "
+    "Return the final answer only AFTER tool results. "
+    "Use document tools (search_docs, read_doc_by_name, rebuild_index) ONLY for questions about documents."
 )
 
 # ----
@@ -82,6 +84,45 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
     trimmed.reverse()
     return {"messages": trimmed}
 
+@before_model
+def force_list_tables(state: AgentState, runtime) -> Dict[str, Any] | None:
+    """Force an initial sql_db_list_tables tool call for clear 'list tables' requests.
+
+    This avoids the model responding with JSON text instead of executing tools.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return None
+
+    last = messages[-1]
+    content = getattr(last, "content", "")
+    text = content if isinstance(content, str) else str(content)
+    q = text.lower().strip()
+
+    triggers = [
+        "list available tables",
+        "list tables",
+        "show tables",
+        "what tables",
+        "available tables",
+    ]
+    if any(t in q for t in triggers):
+        # Return a tool call instruction in the message stream.
+        return {
+            "messages": messages
+            + [
+                {
+                    "role": "assistant",
+                    "content": "Calling sql_db_list_tables now.",
+                    "tool_calls": [
+                        {"id": "force_list_tables_0", "name": "sql_db_list_tables", "args": {}}
+                    ],
+                }
+            ]
+        }
+
+    return None
+
 
 # ----
 def get_agent(cfg: Settings | None = None):
@@ -119,6 +160,7 @@ def get_agent(cfg: Settings | None = None):
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
+            temperature=0,
         )
     else:
         # Fallback for compatible providers or raise error
@@ -138,7 +180,7 @@ def get_agent(cfg: Settings | None = None):
         model=llm,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[trim_history],
+        middleware=[trim_history, force_list_tables],
     )
     return agent
 

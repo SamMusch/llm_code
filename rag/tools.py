@@ -58,6 +58,62 @@ def get_sql_database_tools(llm, cfg: Settings | None = None):
 
 
 @tool
+def run_sql_query(query: str) -> str:
+    """Execute a read-only SQL query against Postgres and return rows.
+
+    Guardrails:
+    - Only allows SELECT / WITH queries.
+    - Blocks multiple statements.
+    - Applies a hard LIMIT if none is present.
+
+    This tool exists to provide a stable, explicit interface for local models that
+    sometimes fail to call `sql_db_query` correctly.
+    """
+    q = (query or "").strip().rstrip(";")
+    if not q:
+        return ""
+
+    q_low = q.lower().strip()
+    if not (q_low.startswith("select") or q_low.startswith("with")):
+        return "Only read-only SELECT/WITH queries are allowed."
+
+    # block multiple statements
+    if ";" in q:
+        return "Only a single SQL statement is allowed."
+
+    # Add a conservative LIMIT if missing
+    if " limit " not in f" {q_low} ":
+        q = f"{q} LIMIT 100"
+
+    cfg = Settings.load()
+    uri = _get_postgres_uri(cfg)
+    if not uri:
+        return "Postgres is not configured (missing POSTGRES_URI)."
+
+    schema = os.environ.get("POSTGRES_SCHEMA") or getattr(cfg, "postgres_schema", None)
+
+    from sqlalchemy import create_engine, text
+
+    connect_args = {}
+    if schema:
+        connect_args = {"options": f"-csearch_path={schema}"}
+
+    engine = create_engine(uri, connect_args=connect_args, pool_pre_ping=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(q)).fetchall()
+            if not rows:
+                return "(no rows)"
+            # Render as TSV for readability
+            out_lines = []
+            for r in rows:
+                out_lines.append("\t".join(str(x) for x in r))
+            return "\n".join(out_lines)
+    finally:
+        engine.dispose()
+
+
+@tool
 def read_doc_by_name(
     name: str | None = None,
     cfg: dict | None = None,
