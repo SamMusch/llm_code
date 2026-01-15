@@ -37,32 +37,15 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
         return None
 
     # Load config to get trimming settings if available, otherwise default
-    # Note: Runtime access to config isn't passed directly here unless properly bound.
-    # We'll use the singleton for simplicity in this middleware.
     cfg = get_settings()
-    # Default to 128k tokens if not specified (common for modern models)
-    # But let's be safe and use a smaller default if not in config, or use config's chars as proxy?
-    # Config has 'max_context_chars', let's stick to a sane token limit.
-    # 4 chars ~= 1 token. 60000 chars ~= 15000 tokens. 
-    # Let's set a hard limit or read from a new config field if it existed.
-    # For now, we'll imply a limit, or maybe use max_context_chars / 4.
-    
+
+    # hard limit or read from a new config field if it existed.
     max_chars = getattr(cfg, "max_context_chars", 60000)
-    # Estimate max tokens 
     MAX_TOKENS = max_chars // 4 if max_chars else 15000
-
-    # encoding = tiktoken.get_encoding("cl100k_base")
-
-    # def _get_tokens(msg: BaseMessage) -> int:
-    #     content = getattr(msg, "content", "")
-    #     text = content if isinstance(content, str) else str(content)
-    #     return len(encoding.encode(text))
-
     def _get_tokens(msg: BaseMessage) -> int:
         content = getattr(msg, "content", "")
         text = content if isinstance(content, str) else str(content)
         return max(1, len(text) // 4)
-
 
     total_tokens = sum(_get_tokens(m) for m in messages)
     if total_tokens <= MAX_TOKENS:
@@ -74,9 +57,7 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
     for msg in reversed(messages):
         tokens = _get_tokens(msg)
         if trimmed and current_tokens + tokens > MAX_TOKENS:
-            # Always keep at least the last message if possible, 
-            # but if the last message itself is huge, we might be in trouble. 
-            # Assuming we can keep at least one.
+            # Always keep at least the last message if possible
             break
         trimmed.append(msg)
         current_tokens += tokens
@@ -86,14 +67,10 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
 
 @before_model
 def force_list_tables(state: AgentState, runtime) -> Dict[str, Any] | None:
-    """Force an initial sql_db_list_tables tool call for clear 'list tables' requests.
-
-    This avoids the model responding with JSON text instead of executing tools.
-    """
+    """Force initial sql_db_list_tables tool call"""
     messages = state.get("messages", [])
     if not messages:
         return None
-
     last = messages[-1]
     content = getattr(last, "content", "")
     text = content if isinstance(content, str) else str(content)
@@ -120,18 +97,14 @@ def force_list_tables(state: AgentState, runtime) -> Dict[str, Any] | None:
                 }
             ]
         }
-
     return None
 
 
 # ----
 def get_agent(cfg: Settings | None = None):
     cfg = cfg or get_settings()
-    
-    # Access settings directly from the typed Settings object
-    provider = cfg.llm_provider
+    provider = cfg.llm_provider # Access settings directly from the typed Settings object
     model_name = cfg.llm_model
-
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(model=model_name)
@@ -141,29 +114,17 @@ def get_agent(cfg: Settings | None = None):
     elif provider == "bedrock":
         import boto3
         from langchain_aws import ChatBedrock
-
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
-
-        llm = ChatBedrock(
-            client=bedrock_runtime,
-            model_id=model_name,
-        )
+        llm = ChatBedrock(client=bedrock_runtime,model_id=model_name,)
     
-    #elif provider == "ollama":
-    #    from langchain_ollama import ChatOllama
-    #    llm = ChatOllama(
-    #        model=model_name,
-    #        base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),)
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-            temperature=0,
-        )
+            temperature=0,)
     else:
-        # Fallback for compatible providers or raise error
         try:
             from langchain_openai import ChatOpenAI
             llm = ChatOpenAI(model=model_name, base_url=os.environ.get("OPENAI_API_BASE"))
@@ -175,7 +136,6 @@ def get_agent(cfg: Settings | None = None):
     tools += get_sql_database_tools(llm, cfg)
     llm = llm.bind_tools(tools)
 
-    print("TOOLS:", [t.name for t in tools])
     agent = _lc_create_agent(
         model=llm,
         tools=tools,
@@ -192,11 +152,7 @@ def create_agent(config: RunnableConfig):
 # ----
 def run_agent(question: str, cfg: Settings | None = None) -> dict:
     agent = get_agent(cfg)
-    state = agent.invoke(
-        {"messages": [{"role": "user", "content": question}]}
-    )
+    state = agent.invoke({"messages": [{"role": "user", "content": question}]})
 
     # Always return state — LangGraph requires dicts
-    return {
-        "messages": state.get("messages", [])
-    }
+    return {"messages": state.get("messages", [])}

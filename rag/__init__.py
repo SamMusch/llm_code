@@ -7,11 +7,8 @@ import logging
 import random
 import numpy as np
 os.environ.setdefault("USER_AGENT", "rag-app/0.1 (+local)")
-
 ROOT = Path(__file__).resolve().parents[1]       # load .env once for the whole package
 load_dotenv(ROOT / ".env")
-
-
 
 # ----------------------------------------
 # OBSERVABILIITY bootstrap

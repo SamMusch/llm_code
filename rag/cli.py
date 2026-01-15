@@ -7,8 +7,6 @@
 
 import typer                # lets you use Python functions to define terminal commands
 from pathlib import Path
-
-# Importing from other scripts
 from rag.config import cfg as base_cfg    # project settings
 from rag.retriever import build_index     # load → chunk → embed → store
 from rag.agent import get_agent          # LangChain agent over tools
@@ -20,7 +18,7 @@ app = typer.Typer(
 
 # ------------------------------------------------------------
 # index()
-    # receives optional path (docs to ingest)
+    # input: docs to ingest
     # calls build_index()
     # verifies the index works
 
