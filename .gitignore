@@ -13,3 +13,4 @@ __pycache__/
 .env.*
 llm-cmds.md
 temp-postgres.md
+Postgres-RDS-GUIDE.md

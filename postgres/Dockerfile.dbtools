@@ -1,0 +1,3 @@
+FROM public.ecr.aws/docker/library/postgres:16-alpine
+# includes psql
+# Do not hardcode ENTRYPOINT. Keep the image generic and control keepalive via ECS task command overrides.
