@@ -1,24 +1,14 @@
 services:
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama:/root/.ollama
-    restart: unless-stopped
 
   llm_code:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: llm_code
-    depends_on:
-      - ollama
     env_file:
       - .env
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
       BG_JOB_ISOLATED_LOOPS: "true"
       LANGGRAPH_BASE_URL: http://127.0.0.1:2024
       # Postgres runtime SQL tools
@@ -37,12 +27,10 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: llm_code_web
-    depends_on:
-      - ollama
     env_file:
       - .env
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
       BG_JOB_ISOLATED_LOOPS: "true"
       # Postgres runtime SQL tools
       POSTGRES_URI: ${POSTGRES_URI}
@@ -55,6 +43,3 @@ services:
       - "127.0.0.1:8080:8080"
     # command: python -m app.main
     command: uvicorn app.main:app --host 0.0.0.0 --port 8080
-
-volumes:
-  ollama:
