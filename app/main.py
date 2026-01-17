@@ -25,8 +25,30 @@ from rag.retriever import verify_faiss_dim_matches_embeddings
 from rag.utils import extract_text_from_stream_delta
 from rag.history import DynamoDBChatMessageHistory
 
+from rag.observability import setup_observability
+
+# Optional: FastAPI auto-instrumentation (safe no-op if deps not installed)
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+except Exception:  # pragma: no cover
+    FastAPIInstrumentor = None  # type: ignore
+
 app = FastAPI()
 log = logging.getLogger("uvicorn.error")
+
+# Bootstrap OpenTelemetry early so middleware/instrumentation picks up the configured providers.
+# Fully env-driven via OTEL_*; safe no-op if disabled/misconfigured.
+setup_observability(service_name="llm_code")
+
+# Auto-instrument FastAPI requests (spans/metrics/log correlation). Requires
+# `opentelemetry-instrumentation-fastapi` in requirements.
+_otel_disabled = os.getenv("OTEL_SDK_DISABLED", "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+if (not _otel_disabled) and FastAPIInstrumentor is not None:
+    try:
+        FastAPIInstrumentor.instrument_app(app)
+    except Exception:
+        # Never break the app if instrumentation fails.
+        pass
 
 
 @app.on_event("startup")

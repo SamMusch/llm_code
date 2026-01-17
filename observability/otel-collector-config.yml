@@ -1,0 +1,58 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+exporters:
+  # For initial bring-up: print telemetry to collector logs.
+  logging:
+    verbosity: detailed
+
+  # Expose collector metrics in Prometheus format for scraping.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+  # Export traces to Tempo (inside the compose network)
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Export logs to Loki (inside the compose network)
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, logging]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, logging]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki, logging]

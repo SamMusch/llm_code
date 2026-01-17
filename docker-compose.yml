@@ -5,6 +5,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: llm_code
+    depends_on:
+      - otel-collector
     env_file:
       - .env
     environment:
@@ -14,6 +16,16 @@ services:
       # Postgres runtime SQL tools
       POSTGRES_URI: ${POSTGRES_URI}
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
+      # OpenTelemetry (airgapped): export to internal Collector only
+      OTEL_SERVICE_NAME: llm_code
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+      # Optional: override/add attributes without code changes
+      # OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local
     volumes:
       - .:/app
       - ~/.aws:/root/.aws:ro
@@ -22,11 +34,86 @@ services:
       - "127.0.0.1:2024:2024"
     command: langgraph dev --host 0.0.0.0 --port 2024
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    depends_on:
+      - tempo
+      - loki
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./observability/otel-collector-config.yml:/etc/otelcol/config.yml:ro
+    ports:
+      # OTLP HTTP receiver (matches OTEL_EXPORTER_OTLP_ENDPOINT)
+      - "127.0.0.1:4318:4318"
+      # OTLP gRPC receiver (optional)
+      - "127.0.0.1:4317:4317"
+      # Prometheus scrape endpoint for collector metrics (optional)
+      - "127.0.0.1:8889:8889"
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./observability/tempo.yml:/etc/tempo/tempo.yml:ro
+      - ./observability/data/tempo:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./observability/loki.yml:/etc/loki/loki.yml:ro
+      - ./observability/data/loki:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.49.1
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/data/prometheus:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/data/grafana:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    restart: unless-stopped
+
   web:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: llm_code_web
+    depends_on:
+      - otel-collector
     env_file:
       - .env
     environment:
@@ -35,6 +122,16 @@ services:
       # Postgres runtime SQL tools
       POSTGRES_URI: ${POSTGRES_URI}
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
+      # OpenTelemetry (airgapped): export to internal Collector only
+      OTEL_SERVICE_NAME: llm_code_web
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+      # Optional: override/add attributes without code changes
+      # OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local
     volumes:
       - .:/app
       - ~/.aws:/root/.aws:ro

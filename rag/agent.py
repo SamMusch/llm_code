@@ -17,6 +17,7 @@ from langchain_core.runnables import RunnableConfig
 
 from .config import Settings, get_settings
 from .tools import search_docs, rebuild_index, get_sql_database_tools
+from .observability import setup_observability
 
 from .middleware.intent import Intent, classify_intent, intent_router_hints, last_human_text
 from .middleware.guards import hallucination_guard_hints, sql_write_guard
@@ -43,6 +44,11 @@ SYSTEM_PROMPT = (
 # ----
 def get_agent(cfg: Settings | None = None):
     cfg = cfg or get_settings()
+
+    # Bootstrap OpenTelemetry as early as possible so it applies to CLI, API, and langgraph.
+    # Fully config-driven via OTEL_* env vars; safe no-op if disabled/misconfigured.
+    setup_observability(service_name="llm_code")
+
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 

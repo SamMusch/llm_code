@@ -47,7 +47,6 @@ langchain-google-genai>=1.0.0
 langchain>=1.0.0,<2.0.0
 langchain-openai>=0.2.0
 langchain-ollama
-langsmith>=0.3.0
 langgraph>=0.2.0
 langgraph-cli[inmem]
 langsmith==0.3.45
@@ -118,7 +117,14 @@ yarl==1.22.0
 zstandard==0.23.0
 typer>=0.12
 unstructured[all-docs]>=0.15
-langgraph>=0.2
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-requests
+opentelemetry-instrumentation-httpx
+opentelemetry-instrumentation-logging
 fastapi
 uvicorn[standard]
 langchain-aws>=0.1.0
