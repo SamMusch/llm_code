@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
 from langchain.agents.middleware import (
@@ -42,7 +42,7 @@ SYSTEM_PROMPT = (
 
 
 # ----
-def get_agent(cfg: Settings | None = None):
+def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str]] = None):
     cfg = cfg or get_settings()
 
     # Bootstrap OpenTelemetry as early as possible so it applies to CLI, API, and langgraph.
@@ -91,7 +91,11 @@ def get_agent(cfg: Settings | None = None):
             raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
 
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
-    tools += get_sql_database_tools(llm, cfg)
+
+    # Postgres tools are opt-in (UI-controlled). Only enable when explicitly selected.
+    selected = set(t.lower() for t in (selected_tools or []))
+    if "database" in selected:
+        tools += get_sql_database_tools(llm, cfg)
     llm = llm.bind_tools(tools)
 
     # Hard stop on runaway loops (per single user turn). Use run_limit only so we don't require a checkpointer.
@@ -127,11 +131,14 @@ def get_agent(cfg: Settings | None = None):
 # ----
 # for langgraph
 def create_agent(config: RunnableConfig):
-    return get_agent()
+    cfg = get_settings()
+    configurable = (config or {}).get("configurable", {})
+    selected_tools = configurable.get("selected_tools") or []
+    return get_agent(cfg, selected_tools=selected_tools)
 
 
 # ----
 def run_agent(question: str, cfg: Settings | None = None) -> dict:
-    agent = get_agent(cfg)
+    agent = get_agent(cfg, selected_tools=[])
     state = agent.invoke({"messages": [{"role": "user", "content": question}]})
     return {"messages": state.get("messages", [])}

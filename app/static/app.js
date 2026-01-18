@@ -23,6 +23,18 @@ const sidebarCloseEl = el("sidebarClose");
 const sidebarBackdropEl = el("sidebarBackdrop");
 const chatSearchEl = el("chatSearch");
 
+// Right sidebar (tools)
+const rightbarEl = el("rightbar");
+const rightbarToggleEl = el("rightbarToggle");
+const rightbarToggleDesktopEl = el("rightbarToggleDesktop");
+const rightbarCloseEl = el("rightbarClose");
+const rightbarBackdropEl = el("rightbarBackdrop");
+
+const toolDbEl = el("toolDb");
+const toolPlaceholder1El = el("toolPlaceholder1");
+const placeholderAEl = el("placeholderA");
+const placeholderBEl = el("placeholderB");
+
 // Projects
 const newProjectBtn = el("newProjectBtn");
 const projectListEl = el("projectList");
@@ -53,6 +65,10 @@ const LS_CHAT_BG = "llm_code_chat_bg_hex";    // e.g. #ffffff
 // Projects + chat metadata
 const LS_PROJECTS = "llm_code_projects_v1";   // [{id,name,created_ts}]
 const LS_SESSION_META = "llm_code_session_meta_v1"; // {session_id:{titleOverride?,projectId?,pinned?,deleted?}}
+
+const LS_RIGHTBAR = "llm_code_rightbar_v1";            // { open: boolean }
+const LS_SELECTED_TOOLS = "llm_code_selected_tools_v1"; // string[]
+
 
 let systemMq = null;
 
@@ -376,27 +392,168 @@ function updateLastAssistantBubble(acc) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// --- Steps panel helpers ---
+function ensureStepsPanel() {
+  // Attach a steps panel under the last assistant bubble (created in sendCurrent)
+  const last = messagesEl.lastElementChild;
+  const inner = last?.firstElementChild;
+  if (!inner) return null;
+
+  let panel = inner.querySelector?.(".stepsPanel");
+  if (panel) return panel;
+
+  panel = document.createElement("details");
+  panel.className = "stepsPanel mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs";
+
+  const summary = document.createElement("summary");
+  summary.className = "cursor-pointer select-none text-slate-700";
+  summary.textContent = "Show steps";
+
+  const meta = document.createElement("div");
+  meta.className = "stepsMeta mt-1 text-slate-600";
+
+  const list = document.createElement("div");
+  list.className = "stepsList mt-2 space-y-2";
+
+  panel.appendChild(summary);
+  panel.appendChild(meta);
+  panel.appendChild(list);
+
+  inner.appendChild(panel);
+  return panel;
+}
+
+function setStepsMeta(traceId) {
+  const panel = ensureStepsPanel();
+  if (!panel) return;
+  const meta = panel.querySelector(".stepsMeta");
+  if (!meta) return;
+  if (!traceId) {
+    meta.textContent = "";
+    return;
+  }
+  meta.textContent = `trace_id: ${traceId}`;
+}
+
+function renderSteps(steps) {
+  const panel = ensureStepsPanel();
+  if (!panel) return;
+  const list = panel.querySelector(".stepsList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  (steps || []).forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "rounded-md border border-slate-200 bg-white p-2";
+
+    const head = document.createElement("div");
+    head.className = "font-medium text-slate-900";
+    const name = s?.name || "";
+    const status = s?.status || "";
+    head.textContent = `${s.step_type || "step"}: ${name} — ${status}`;
+
+    const pre = document.createElement("pre");
+    pre.className = "mt-1 whitespace-pre-wrap text-slate-800";
+
+    const asText = (v) => {
+      if (v == null) return "";
+      if (typeof v === "string") return v;
+      try {
+        return JSON.stringify(v, null, 2);
+      } catch {
+        return String(v);
+      }
+    };
+
+    if (s.status === "start") {
+      const t = asText(s.input);
+      pre.textContent = t ? `input:\n${t}` : "";
+    } else if (s.status === "ok") {
+      const t = asText(s.output);
+      pre.textContent = t ? `output:\n${t}` : "";
+    } else {
+      const t = asText(s.error);
+      pre.textContent = t ? `error:\n${t}` : "";
+    }
+
+    row.appendChild(head);
+    if (pre.textContent) row.appendChild(pre);
+    list.appendChild(row);
+  });
+}
+
 function streamAnswer(userText, fileIds = []) {
   const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
   const fileParam = ids.length ? `&file_ids=${encodeURIComponent(ids.join(","))}` : "";
 
+  const tools = getSelectedTools();
+  const toolsParam = tools.length ? `&tools=${encodeURIComponent(tools.join(","))}` : "";
+
   const url = `/chat/stream?message=${encodeURIComponent(
     userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}`;
+  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}`;
   const es = new EventSource(url);
 
   let acc = "";
+  let steps = [];
+  let traceId = "";
 
   es.addEventListener("error", () => {
     es.close();
     acc += "\n[stream error]";
-    // reflect in UI
+
     const lastIdx = activeMessages.length - 1;
     if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
       activeMessages[lastIdx].content = acc;
     }
     updateLastAssistantBubble(acc);
   });
+
+  es.addEventListener("meta", (evt) => {
+    try {
+      const obj = JSON.parse(evt.data || "{}");
+      traceId = obj.trace_id || "";
+      setStepsMeta(traceId);
+    } catch {
+      // ignore
+    }
+  });
+
+  es.addEventListener("token", (evt) => {
+    const chunk = (evt.data || "").replaceAll("\\n", "\n");
+    acc += chunk;
+
+    const lastIdx = activeMessages.length - 1;
+    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
+      activeMessages[lastIdx].content = acc;
+    }
+
+    updateLastAssistantBubble(acc);
+  });
+
+  es.addEventListener("step", (evt) => {
+    try {
+      const s = JSON.parse(evt.data || "{}");
+      steps.push(s);
+      renderSteps(steps);
+    } catch {
+      // ignore malformed step
+    }
+  });
+
+  // Backwards compatibility: if server sends default "message" events with data
+  es.onmessage = (evt) => {
+    const chunk = (evt.data || "").replaceAll("\\n", "\n");
+    if (!chunk) return;
+    acc += chunk;
+
+    const lastIdx = activeMessages.length - 1;
+    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
+      activeMessages[lastIdx].content = acc;
+    }
+
+    updateLastAssistantBubble(acc);
+  };
 
   es.addEventListener("end", async () => {
     es.close();
@@ -408,20 +565,6 @@ function streamAnswer(userText, fileIds = []) {
       // non-fatal
     }
   });
-
-  es.onmessage = (evt) => {
-    const chunk = (evt.data || "").replaceAll("\\n", "\n");
-    acc += chunk;
-
-    // update in-memory
-    const lastIdx = activeMessages.length - 1;
-    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
-      activeMessages[lastIdx].content = acc;
-    }
-
-    // paint incrementally
-    updateLastAssistantBubble(acc);
-  };
 }
 
 function sendCurrent() {
@@ -697,6 +840,89 @@ function applyTheme(t) {
   setActiveChoice(document.querySelectorAll(".themeOpt"), (b) => (b.dataset.theme || "") === theme);
 }
 
+function loadJsonLS(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; } catch { return fallback; }
+}
+function saveJsonLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
+
+function getSelectedTools() {
+  const arr = loadJsonLS(LS_SELECTED_TOOLS, []);
+  return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+}
+function setSelectedTools(arr) {
+  const clean = Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+  saveJsonLS(LS_SELECTED_TOOLS, clean);
+}
+
+function syncToolCheckboxesFromState() {
+  const sel = new Set(getSelectedTools());
+  if (toolDbEl) toolDbEl.checked = sel.has("database");
+  if (toolPlaceholder1El) toolPlaceholder1El.checked = sel.has("placeholder1");
+  if (placeholderAEl) placeholderAEl.checked = sel.has("placeholderA");
+  if (placeholderBEl) placeholderBEl.checked = sel.has("placeholderB");
+}
+function readToolCheckboxesToState() {
+  const next = [];
+  if (toolDbEl?.checked) next.push("database");
+  if (toolPlaceholder1El?.checked) next.push("placeholder1");
+  if (placeholderAEl?.checked) next.push("placeholderA");
+  if (placeholderBEl?.checked) next.push("placeholderB");
+  setSelectedTools(next);
+  return next;
+}
+
+function openRightbar() {
+  if (!rightbarEl) return;
+  rightbarEl.classList.remove("hidden");
+  rightbarEl.classList.add("flex");
+  rightbarBackdropEl?.classList.remove("hidden");
+  saveJsonLS(LS_RIGHTBAR, { open: true });
+}
+function closeRightbar() {
+  if (!rightbarEl) return;
+  // only hide on mobile
+  if (window.matchMedia && window.matchMedia("(min-width: 768px)").matches) {
+    rightbarBackdropEl?.classList.add("hidden");
+    saveJsonLS(LS_RIGHTBAR, { open: false });
+    return;
+  }
+  rightbarEl.classList.add("hidden");
+  rightbarEl.classList.remove("flex");
+  rightbarBackdropEl?.classList.add("hidden");
+  saveJsonLS(LS_RIGHTBAR, { open: false });
+}
+
+function initRightbarControls() {
+  // collapsed by default
+  closeRightbar();
+
+  const st = loadJsonLS(LS_RIGHTBAR, { open: false });
+  if (st?.open) openRightbar();
+
+  syncToolCheckboxesFromState();
+
+  rightbarToggleEl?.addEventListener("click", (e) => { e.preventDefault(); openRightbar(); });
+  rightbarCloseEl?.addEventListener("click", (e) => { e.preventDefault(); closeRightbar(); });
+  rightbarBackdropEl?.addEventListener("click", () => closeRightbar());
+
+  rightbarToggleDesktopEl?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const isHidden = rightbarEl?.classList.contains("hidden");
+    if (isHidden) openRightbar();
+    else {
+      rightbarEl?.classList.add("hidden");
+      rightbarEl?.classList.remove("flex");
+      rightbarBackdropEl?.classList.add("hidden");
+      saveJsonLS(LS_RIGHTBAR, { open: false });
+    }
+  });
+
+  [toolDbEl, toolPlaceholder1El, placeholderAEl, placeholderBEl].forEach((x) => {
+    x?.addEventListener("change", () => { readToolCheckboxesToState(); });
+  });
+}
+
+
 function openSidebar() {
   if (!sidebarEl) return;
   sidebarEl.classList.remove("hidden");
@@ -834,6 +1060,7 @@ function initSettingsModal() {
 (async () => {
   autosizeTextarea();
   initSidebarControls();
+  initRightbarControls();
   initSettingsModal();
   renderProjects();
   await loadSessions();

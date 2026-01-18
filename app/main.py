@@ -5,6 +5,7 @@ import sys
 import uuid
 import logging
 import urllib.parse
+import json
 from typing import AsyncIterator
 from pathlib import Path
 
@@ -26,6 +27,8 @@ from rag.utils import extract_text_from_stream_delta
 from rag.history import DynamoDBChatMessageHistory
 
 from rag.observability import setup_observability
+from opentelemetry import trace
+from rag.steps import StepSpanCallbackHandler
 
 # Optional: FastAPI auto-instrumentation (safe no-op if deps not installed)
 try:
@@ -183,7 +186,7 @@ async def api_upload_files(session_id: str, files: list[UploadFile] = File(...))
 
 
 
-async def llm_stream(messages: list[dict]) -> AsyncIterator[str]:
+async def llm_stream(messages: list[dict], *, callbacks: list | None = None) -> AsyncIterator[str]:
     """Yield text chunks from the real LangChain/LangGraph agent."""
     cfg = get_settings()
     agent = get_agent(cfg)
@@ -191,7 +194,8 @@ async def llm_stream(messages: list[dict]) -> AsyncIterator[str]:
     # IMPORTANT: This must match what rag/agent.py expects
     inputs = {"messages": messages}
 
-    async for event in agent.astream_events(inputs, version="v2"):
+    config = {"callbacks": callbacks} if callbacks else None
+    async for event in agent.astream_events(inputs, version="v2", config=config):
         if event.get("event") != "on_chat_model_stream":
             continue
 
@@ -205,6 +209,18 @@ async def llm_stream(messages: list[dict]) -> AsyncIterator[str]:
             continue
 
         yield text
+
+
+# Helper to get current OTEL trace id (hex)
+def _trace_id_hex() -> str:
+    try:
+        span = trace.get_current_span()
+        ctx = span.get_span_context() if span else None
+        if not ctx or not getattr(ctx, "trace_id", 0):
+            return ""
+        return f"{ctx.trace_id:032x}"
+    except Exception:
+        return ""
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -517,6 +533,7 @@ async def chat_stream(
     message: str = "",
     session_id: str | None = None,
     file_ids: str | None = None,
+    tools: str | None = None,
 ):
     msg = (message or "").strip()
     if not msg:
@@ -526,6 +543,14 @@ async def chat_stream(
 
     sid = session_id or request.headers.get("X-Session-Id") or str(uuid.uuid4())
     history = DynamoDBChatMessageHistory(session_id=sid, limit=20)
+
+    # Optional tool gating from UI (comma-separated). Examples: "database,placeholder1"
+    selected_tools: list[str] = []
+    if tools:
+        try:
+            selected_tools = [t.strip() for t in str(tools).split(",") if t.strip()]
+        except Exception:
+            selected_tools = []
 
     # 1) Save user message
     try:
@@ -578,29 +603,127 @@ async def chat_stream(
 
         full: list[str] = []
         stripper = _TaggedBlockStripper()
+
+        steps_cb = StepSpanCallbackHandler(
+            max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
+            emit_logs=os.getenv("STEPS_EMIT_LOGS", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"},
+        )
+
+        trace_id = _trace_id_hex()
+        meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools})
+        yield f"event: meta\ndata: {meta}\n\n".encode("utf-8")
+
         try:
-            async for chunk in llm_stream(context_msgs):
-                # Strip tagged blocks across chunk boundaries (e.g., <thinking> ... </thinking>)
-                cleaned = stripper.feed(chunk)
-                if not cleaned:
-                    continue
+            cfg = get_settings()
+            agent = get_agent(cfg)
+            inputs = {"messages": context_msgs}
 
-                full.append(cleaned)
+            lg_cfg = {
+                "callbacks": [steps_cb],
+                "recursion_limit": int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50")),
+                # Passed through to LangGraph nodes/tools that read configurable settings.
+                "configurable": {
+                    "selected_tools": selected_tools,
+                },
+            }
 
-                # SSE data must be line-safe
-                safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
-                yield f"data: {safe}\n\n".encode("utf-8")
+            try:
+                async for event in agent.astream_events(inputs, version="v2", config=lg_cfg):
+                    kind = event.get("event")
+
+                    # 1) Tokens
+                    if kind == "on_chat_model_stream":
+                        chunk = (event.get("data") or {}).get("chunk")
+                        if chunk is None:
+                            continue
+                        delta = getattr(chunk, "content", None)
+                        text = extract_text_from_stream_delta(delta)
+                        if not text:
+                            continue
+
+                        cleaned = stripper.feed(text)
+                        if not cleaned:
+                            continue
+                        full.append(cleaned)
+
+                        safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
+                        yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
+                        continue
+
+                    # 2) Tool steps (LangSmith-like)
+                    if kind in {"on_tool_start", "on_tool_end", "on_tool_error"}:
+                        data = event.get("data") or {}
+                        serialized = data.get("serialized") or {}
+
+                        # LangGraph/LangChain put tool names in different places depending on wrapper.
+                        name = (
+                            event.get("name")
+                            or data.get("name")
+                            or serialized.get("name")
+                            or serialized.get("id")
+                            or ""
+                        )
+                        run_id = str(event.get("run_id") or data.get("run_id") or "")
+
+                        def _as_str(v: object) -> str:
+                            if v is None:
+                                return ""
+                            if isinstance(v, str):
+                                return v
+                            try:
+                                return json.dumps(v, default=str)
+                            except Exception:
+                                return str(v)
+
+                        max_chars = int(os.getenv("STEPS_MAX_CHARS", "2000"))
+
+                        if kind == "on_tool_start":
+                            step = {
+                                "step_type": "tool",
+                                "name": str(name),
+                                "status": "start",
+                                "run_id": run_id,
+                                "input": _as_str(data.get("input") or data.get("inputs") or ""),
+                            }
+                        elif kind == "on_tool_end":
+                            step = {
+                                "step_type": "tool",
+                                "name": str(name),
+                                "status": "ok",
+                                "run_id": run_id,
+                                "output": _as_str(data.get("output") or ""),
+                            }
+                        else:
+                            step = {
+                                "step_type": "tool",
+                                "name": str(name),
+                                "status": "error",
+                                "run_id": run_id,
+                                "error": _as_str(data.get("error") or ""),
+                            }
+
+                        # Cap payload sizes to keep SSE stable.
+                        for k in ("input", "output", "error"):
+                            if k in step and isinstance(step[k], str) and len(step[k]) > max_chars:
+                                step[k] = step[k][:max_chars] + "...(truncated)"
+
+                        yield f"event: step\ndata: {json.dumps(step, default=str)}\n\n".encode("utf-8")
+                        continue
+            except Exception as e:
+                # Surface a readable error to the client; the outer finally will still persist what we have.
+                msg = str(e)
+                yield f"event: error\ndata: {msg}\n\n".encode("utf-8")
         finally:
             # Flush any remaining safe text (only when not inside a tagged block)
             tail = stripper.flush()
             if tail:
                 full.append(tail)
                 safe_tail = tail.replace("\r", "\\r").replace("\n", "\\n")
-                yield f"data: {safe_tail}\n\n".encode("utf-8")
+                yield f"event: token\ndata: {safe_tail}\n\n".encode("utf-8")
 
             if full:
                 try:
-                    history.add_ai_message("".join(full))
+                    history.add_ai_message("".join(full), trace_id=trace_id)
                     log.info(f"DDB assistant write OK session_id={sid}")
                 except Exception as e:
                     log.exception(f"DDB assistant write FAILED session_id={sid}: {e}")
@@ -624,8 +747,9 @@ async def api_chat_stream(
     message: str = "",
     session_id: str | None = None,
     file_ids: str | None = None,
+    tools: str | None = None,
 ):
-    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids)
+    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids, tools=tools)
 
 
 @app.get("/api/files/{file_id}")

@@ -13,28 +13,6 @@
 
 Pre-reqs: **Docker Desktop** & a **LangSmith** account
 
-### Layout
-
-```bash
-llm_code/
-├─ rag/
-│  ├─ agent.py              # agent + LLM wiring
-│  ├─ retriever.py          # retrieval pipeline
-│  ├─ generator.py          # generation pipeline
-│  ├─ cli.py                # CLI entrypoints
-│  └─ utils.py              # helpers
-├─ config/
-│  └─ rag.yaml              # runtime configuration
-├─ Data/
-│  ├─ docs/                 # source documents
-│  ├─ index/                # vector index artifacts
-│  └─ logs/
-├─ Dockerfile
-├─ docker-compose.yml
-├─ requirements.txt
-├─ .env                     # secrets (not committed)
-└─ README.md
-```
 
 ### Install instructions
 

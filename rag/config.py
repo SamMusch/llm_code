@@ -3,7 +3,8 @@
 
 from pydantic import BaseModel
 from pathlib import Path
-import os, yaml
+import os
+import yaml
 
 class Settings(BaseModel):
     # paths
@@ -42,35 +43,42 @@ class Settings(BaseModel):
                 raw = yaml.safe_load(f) or {}
                 yaml_data = raw.get("rag", {})
 
-        env = {}    # Map YAML → env dict
+        cfg_vals: dict[str, object] = {}  # merged config values (YAML first, then env overrides)
         unified_mapping = {
-            "paths.docs_dir":      ("docs_dir", Path),      # paths
-            "paths.data_dir":      ("data_dir", Path),
-            "paths.index_dir":     ("faiss_dir", Path),
-            "paths.logs_dir":      ("logs_dir", Path),
+            # paths
+            "paths.docs_dir": ("docs_dir", Path),
+            "paths.data_dir": ("data_dir", Path),
+            "paths.index_dir": ("faiss_dir", Path),
+            "paths.logs_dir": ("logs_dir", Path),
 
-            "llm.provider":        ("llm_provider", None),  # llm
-            "llm.model":           ("llm_model", None),
-            "llm.base_url":        ("llm_base_url", None),
-            
-            "embedding.model":        ("embedding_model", None),  # embedding
-            "embedding.chunk_size":   ("chunk_size", None),
-            "embedding.chunk_overlap":("chunk_overlap", None),
-            "embedding.top_k":        ("k", None),
+            # llm
+            "llm.provider": ("llm_provider", str),
+            "llm.model": ("llm_model", str),
+            "llm.base_url": ("llm_base_url", str),
 
-            "runtime.max_retries":      ("max_retries", None),      # runtime
-            "runtime.hallucination_guard": ("hallucination_guard", None),
-            "runtime.max_context_chars":   ("max_context_chars", None),
+            # embedding
+            "embedding.model": ("embedding_model", str),
+            "embedding.chunk_size": ("chunk_size", int),
+            "embedding.chunk_overlap": ("chunk_overlap", int),
+            "embedding.top_k": ("k", int),
 
-            "postgres.uri":         ("postgres_uri", None),
-            "postgres.schema":      ("postgres_schema", None),
+            # runtime
+            "runtime.max_retries": ("max_retries", int),
+            "runtime.hallucination_guard": ("hallucination_guard", bool),
+            "runtime.max_context_chars": ("max_context_chars", int),
+
+            # postgres
+            "postgres.uri": ("postgres_uri", str),
+            "postgres.schema": ("postgres_schema", str),
         }
         for dotted_key, (env_key, cast) in unified_mapping.items():
             section, key = dotted_key.split(".")
             section_data = yaml_data.get(section, {})
             if key in section_data:
                 value = section_data[key]
-                env[env_key] = cast(value) if cast else value
+                if value is None:
+                    continue
+                cfg_vals[env_key] = cast(value) if cast else value
 
         env_override_mapping = {
             "DATA_DIR":        ("data_dir", Path),
@@ -85,11 +93,18 @@ class Settings(BaseModel):
             "POSTGRES_SCHEMA": ("postgres_schema", str),
         }
         for env_var, (env_key, cast) in env_override_mapping.items():
-            if env_var in os.environ:
-                raw_value = os.environ[env_var]
-                env[env_key] = cast(raw_value) if cast else raw_value
+            if env_var not in os.environ:
+                continue
+            raw_value = os.environ.get(env_var, "")
+            if raw_value is None:
+                continue
+            raw_value = raw_value.strip()
+            # Do not let empty env vars override YAML defaults.
+            if raw_value == "":
+                continue
+            cfg_vals[env_key] = cast(raw_value) if cast else raw_value
 
-        return cls(**env)
+        return cls(**cfg_vals)
 
 # Singleton config instance for convenient import
 # Return a singleton Settings instance loaded from rag.yaml + env vars

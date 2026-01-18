@@ -13,8 +13,10 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       BG_JOB_ISOLATED_LOOPS: "true"
       LANGGRAPH_BASE_URL: http://127.0.0.1:2024
+      LANGSMITH_TRACING: "false"
+      LANGGRAPH_CLI_NO_ANALYTICS: "1"
       # Postgres runtime SQL tools
-      POSTGRES_URI: ${POSTGRES_URI}
+      POSTGRES_URI: ${POSTGRES_URI:-}
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
       # OpenTelemetry (airgapped): export to internal Collector only
       OTEL_SERVICE_NAME: llm_code
@@ -32,7 +34,7 @@ services:
     working_dir: /app
     ports:
       - "127.0.0.1:2024:2024"
-    command: langgraph dev --host 0.0.0.0 --port 2024
+    command: langgraph dev --host 0.0.0.0 --port 2024 --no-browser
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.96.0
@@ -120,7 +122,7 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       BG_JOB_ISOLATED_LOOPS: "true"
       # Postgres runtime SQL tools
-      POSTGRES_URI: ${POSTGRES_URI}
+      POSTGRES_URI: ${POSTGRES_URI:-}
       POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-llm_code}
       # OpenTelemetry (airgapped): export to internal Collector only
       OTEL_SERVICE_NAME: llm_code_web

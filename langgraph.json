@@ -6,7 +6,12 @@
   "dependencies": ["."],
   "http": {
     "cors": {
-      "allow_origins": ["https://smith.langchain.com"],
+      "allow_origins": [
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+        "http://127.0.0.1:2024",
+        "http://localhost:2024"
+      ],
       "allow_credentials": true,
       "allow_methods": ["*"],
       "allow_headers": ["*"]

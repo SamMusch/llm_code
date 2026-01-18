@@ -101,20 +101,25 @@ class DynamoDBChatMessageHistory(BaseChatMessageHistory):
     # -------- Convenience helpers --------
 
     def add_user_message(self, text: str) -> None:
-        self._put_item(role="user", text=text)
+        self._put_item(role="user", text=text, extra=None)
 
-    def add_ai_message(self, text: str) -> None:
-        self._put_item(role="assistant", text=text)
+    def add_ai_message(self, text: str, trace_id: str | None = None) -> None:
+        extra: dict[str, str] = {}
+        if trace_id:
+            extra["trace_id"] = trace_id
+        self._put_item(role="assistant", text=text, extra=extra or None)
 
     # -------- Internal --------
 
-    def _put_item(self, role: str, text: str) -> None:
-        self._table.put_item(
-            Item={
-                "session_id": self.session_id,
-                "ts": int(time.time() * 1000),
-                "role": role,
-                "user_id": self.user_id,
-                "message": text,
-            }
-        )
+    def _put_item(self, role: str, text: str, extra: dict | None = None) -> None:
+        item = {
+            "session_id": self.session_id,
+            "ts": int(time.time() * 1000),
+            "role": role,
+            "user_id": self.user_id,
+            "message": text,
+        }
+        if extra:
+            item.update(extra)
+
+        self._table.put_item(Item=item)

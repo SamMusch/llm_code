@@ -5,10 +5,16 @@ tools.py
 """
 
 from pathlib import Path
-from .config import Settings
-from langchain.tools import tool
-from .retriever import load_retriever, build_index
+import logging
 import os
+
+from langchain.tools import tool
+
+from .config import Settings
+from .retriever import load_retriever, build_index
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
@@ -26,17 +32,25 @@ def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
     return None
 
 
-def get_sql_database_tools(llm, cfg: Settings | None = None):
+def get_sql_database_tools(llm, cfg: Settings | None = None, enabled: bool = False):
     """Build LangChain SQLDatabaseToolkit tools for the configured Postgres DB.
 
     This follows LangChain's SQLDatabase toolkit pattern.
     If Postgres isn't configured, returns an empty list.
+
+    IMPORTANT:
+    - This must be fail-open (return []) if Postgres is temporarily unreachable,
+      so chat streaming does not crash.
     """
+    if not enabled:
+        return []
+
     uri = _get_postgres_uri(cfg)
     if not uri:
         return []
 
     # Local import so Postgres deps are optional unless enabled.
+    from sqlalchemy.exc import OperationalError
     from langchain_community.utilities.sql_database import SQLDatabase
     from langchain_community.agent_toolkits import SQLDatabaseToolkit
 
@@ -52,9 +66,17 @@ def get_sql_database_tools(llm, cfg: Settings | None = None):
     if schema:
         engine_args = {"connect_args": {"options": f"-csearch_path={schema}"}}
 
-    db = SQLDatabase.from_uri(uri, engine_args=engine_args)
-    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-    return toolkit.get_tools()
+    try:
+        db = SQLDatabase.from_uri(uri, engine_args=engine_args)
+        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        return toolkit.get_tools()
+    except OperationalError as e:
+        logger.exception("Postgres unavailable; disabling SQL tools for this request", exc_info=e)
+        return []
+    except Exception as e:
+        # Defensive: do not let SQL tool init crash /chat/stream.
+        logger.exception("Failed to initialize SQL tools; disabling SQL tools for this request", exc_info=e)
+        return []
 
 
 @tool
@@ -150,7 +172,6 @@ def read_doc_by_name(
             except Exception:
                 continue
     return ""
-
 
 
 @tool
