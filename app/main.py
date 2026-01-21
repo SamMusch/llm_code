@@ -605,6 +605,68 @@ async def chat_stream(
         stripper = _TaggedBlockStripper()
         saw_token = False
 
+        def _short(v: object, limit: int = 800) -> str:
+            try:
+                s = json.dumps(v, default=str)
+            except Exception:
+                try:
+                    s = str(v)
+                except Exception:
+                    s = "<unprintable>"
+            if len(s) > limit:
+                return s[:limit] + "...(truncated)"
+            return s
+
+        def _text_from_any(v: object) -> str:
+            """Best-effort extraction of text from various LangChain/Bedrock shapes.
+
+            Bedrock Converse often returns content blocks like:
+              [{"type": "text", "text": "..."}]
+            """
+            if v is None:
+                return ""
+            if isinstance(v, str):
+                return v
+            if isinstance(v, list):
+                parts: list[str] = []
+                for it in v:
+                    if it is None:
+                        continue
+                    if isinstance(it, str):
+                        parts.append(it)
+                        continue
+
+                    # Bedrock Converse / Nova commonly returns content blocks (dicts).
+                    # Only emit actual text; never stringify dicts.
+                    if isinstance(it, dict):
+                        t = it.get("text")
+                        if t:
+                            parts.append(str(t))
+                            continue
+                        nested = it.get("content")
+                        if nested:
+                            parts.append(_text_from_any(nested))
+                            continue
+                        # No usable text in this block
+                        continue
+
+                    # Fallback for non-dict objects
+                    try:
+                        parts.append(str(it))
+                    except Exception:
+                        pass
+
+                return "".join(parts)
+            if isinstance(v, dict):
+                for k in ("text", "content", "output_text", "completion"):
+                    if v.get(k):
+                        return _text_from_any(v.get(k))
+                return ""
+            try:
+                return extract_text_from_stream_delta(v) or ""
+            except Exception:
+                return ""
+
         steps_cb = StepSpanCallbackHandler(
             max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
             emit_logs=os.getenv("STEPS_EMIT_LOGS", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"},
@@ -638,7 +700,9 @@ async def chat_stream(
                         if chunk is None:
                             continue
                         delta = getattr(chunk, "content", None)
-                        text = extract_text_from_stream_delta(delta)
+                        if isinstance(delta, (list, dict)):
+                            log.warning(f"[chat_stream] stream delta type={type(delta)} sample={_short(delta)}")
+                        text = _text_from_any(delta)
                         if not text:
                             continue
 
@@ -716,6 +780,7 @@ async def chat_stream(
                     if kind in {"on_chat_model_end", "on_llm_end"} and (not saw_token):
                         data = event.get("data") or {}
                         out = data.get("output")
+                        log.warning(f"[chat_stream] end output type={type(out)} sample={_short(out)}")
 
                         text = ""
 
@@ -726,7 +791,7 @@ async def chat_stream(
                                 g0 = gens[0]
                                 msg = getattr(g0, "message", None)
                                 if msg is not None and hasattr(msg, "content"):
-                                    text = extract_text_from_stream_delta(getattr(msg, "content", None))
+                                    text = _text_from_any(getattr(msg, "content", None))
                                 else:
                                     t = getattr(g0, "text", None)
                                     if t:
@@ -737,7 +802,7 @@ async def chat_stream(
                             try:
                                 content = out.get("output", {}).get("message", {}).get("content")
                                 if content:
-                                    text = extract_text_from_stream_delta(content)
+                                    text = _text_from_any(content)
                             except Exception:
                                 pass
                             if not text:
@@ -748,7 +813,7 @@ async def chat_stream(
 
                         # Message-like
                         elif out is not None and hasattr(out, "content"):
-                            text = extract_text_from_stream_delta(getattr(out, "content", None))
+                            text = _text_from_any(getattr(out, "content", None))
 
                         if text:
                             cleaned = stripper.feed(text)
@@ -758,6 +823,72 @@ async def chat_stream(
                                 safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
                                 yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
                         continue
+
+                # Fallback: if the underlying model doesn't emit token stream events (or streaming is disabled),
+                # do a single-shot invoke and emit one final token.
+                if not saw_token:
+                    log.warning(
+                        f"[chat_stream] No streamed tokens seen; falling back to ainvoke() session_id={sid} trace_id={trace_id}"
+                    )
+                    result = await agent.ainvoke(inputs, config=lg_cfg)
+                    log.warning(
+                        f"[chat_stream] ainvoke result type={type(result)} sample={_short(result)}"
+                    )
+
+                    final_text = ""
+                    try:
+                        # Common LangGraph shape: {"messages": [...]} where we need to find a non-empty AI message
+                        if isinstance(result, dict):
+                            msgs = result.get("messages") or []
+                            log.warning(f"[chat_stream] ainvoke messages count={len(msgs)}")
+                            if msgs:
+                                # Walk backwards to find the first non-empty *AI* message content.
+                                # Avoid emitting SystemMessage/HumanMessage/tool scaffolding.
+                                for m in reversed(msgs):
+                                    try:
+                                        mtype = type(m)
+                                        content = getattr(m, "content", None)
+                                        text = _text_from_any(content)
+                                        log.warning(
+                                            f"[chat_stream] ainvoke scan type={mtype} content_sample={_short(content)}"
+                                        )
+
+                                        # Prefer only AI messages
+                                        if mtype.__name__ != "AIMessage":
+                                            continue
+
+                                        if not text:
+                                            continue
+
+                                        # Skip common scaffolding strings
+                                        if text.strip().startswith("HallucinationGuard="):
+                                            continue
+                                        if text.strip().lower().startswith("calling "):
+                                            continue
+
+                                        final_text = text
+                                        break
+                                    except Exception:
+                                        continue
+
+                        # Direct message-like
+                        elif hasattr(result, "content"):
+                            final_text = _text_from_any(getattr(result, "content", None)) or str(
+                                getattr(result, "content", "") or ""
+                            )
+                    except Exception:
+                        final_text = ""
+
+                    final_text = (final_text or "").strip()
+                    if final_text:
+                        cleaned = stripper.feed(final_text)
+                        if cleaned:
+                            full.append(cleaned)
+                            saw_token = True
+                            safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
+                            yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
+                    else:
+                        yield b"event: error\ndata: No output from ainvoke()\n\n"
             except Exception as e:
                 # Surface a readable error to the client; the outer finally will still persist what we have.
                 msg = str(e)

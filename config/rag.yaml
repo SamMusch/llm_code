@@ -13,7 +13,7 @@ rag:
 
   llm:
     provider: "ollama" 
-    model: "qwen2.5:3b" #  "llama3.2:1b"
+    model: "qwen2.5:3b" # qwen2.5-coder:7b-instruct # "qwen2.5:3b" #  "llama3.2:1b"
     base_url: "http://host.docker.internal:11434" # macOS host Ollama (Metal). For Docker-to-Docker, use http://ollama:11434
 
   embedding:

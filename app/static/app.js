@@ -333,6 +333,14 @@ function renderMessages(msgs) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// Helper to refresh only the sidebar sessions list, without re-rendering messages or steps panel
+async function refreshSessionsListOnly() {
+  const data = await fetchJson("/api/sessions?limit=50");
+  sessions = data.sessions || [];
+  renderChatList(sessions);
+  // Do NOT call openSession() here; it re-renders messages and would remove the steps panel.
+}
+
 async function loadSessions() {
   const data = await fetchJson("/api/sessions?limit=50");
   sessions = data.sessions || [];
@@ -560,7 +568,7 @@ function streamAnswer(userText, fileIds = []) {
 
     // On completion, refresh sidebar list so the session appears / title updates
     try {
-      await loadSessions();
+      await refreshSessionsListOnly();
     } catch {
       // non-fatal
     }

@@ -1,0 +1,17 @@
+{
+	"ulid": "01KFGVVFVV3YFSRMK20BESCASG",
+	"minTime": 1768939200000,
+	"maxTime": 1768946400000,
+	"stats": {
+		"numSamples": 61272,
+		"numSeries": 222,
+		"numChunks": 666
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KFGVVFVV3YFSRMK20BESCASG"
+		]
+	},
+	"version": 1
+}

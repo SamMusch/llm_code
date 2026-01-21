@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import inspect
+import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
@@ -32,6 +33,9 @@ except ImportError:
     from .tools import read_doc_by_name as READ_DOC_TOOL
 
 
+log = logging.getLogger("uvicorn.error")
+
+
 SYSTEM_PROMPT = (
     "You are an assistant with TWO data sources: (1) documents (md, pptx, xlsx, pdf) and (2) a Postgres database. "
     "For database questions you MUST use tools and you MUST NOT answer from memory. "
@@ -53,23 +57,35 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 
+    # Fail fast with a readable error instead of silently producing start/meta/end only.
+    if not provider:
+        raise ValueError(
+            "cfg.llm_provider is empty. Set LLM_PROVIDER (e.g., 'bedrock') or llm.provider in config/rag.yaml."
+        )
+    if not model_name:
+        raise ValueError(
+            "cfg.llm_model is empty. Set LLM_MODEL (e.g., 'anthropic.claude-3-sonnet-20240229-v1:0') or llm.model in config/rag.yaml."
+        )
+
+    log.info(f"[agent] llm_provider={provider} llm_model={model_name}")
+
     if provider == "bedrock":
         import boto3
-        from pydantic import ValidationError
 
         region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
         bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
 
+        # Bedrock Converse/ConverseStream rejects unknown payload keys. Do NOT pass streaming=True.
+        # Prefer Converse wrapper when available; fall back to ChatBedrock without streaming kwargs.
         try:
             from langchain_aws import ChatBedrockConverse as BedrockChat
-            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)  # NO streaming kw
-        except Exception:
+            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
+        except Exception as e:
+            log.warning(
+                f"[agent] ChatBedrockConverse unavailable or failed; falling back to ChatBedrock. err={e}"
+            )
             from langchain_aws import ChatBedrock as BedrockChat
-            try:
-                llm = BedrockChat(client=bedrock_runtime, model_id=model_name, streaming=True)
-            except TypeError:
-                llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
-
+            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
 
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -107,8 +123,7 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         model=llm,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[
-            model_call_limiter,
+        middleware=[model_call_limiter,
             tool_call_limiter,
             search_docs_limiter,
             sql_query_limiter,
@@ -119,8 +134,8 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
             hallucination_guard_hints,
             context_relevance_hint,
             force_list_tables,
-            stop_after_final_answer # last
-        ],
+            # stop_after_final_answer # last
+        ]
     )
     return agent
 
