@@ -12,7 +12,7 @@ services:
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       BG_JOB_ISOLATED_LOOPS: "true"
-      LANGGRAPH_BASE_URL: http://127.0.0.1:2024
+      LANGGRAPH_BASE_URL: http://localhost:2024
       LANGSMITH_TRACING: "false"
       LANGGRAPH_CLI_NO_ANALYTICS: "1"
       # Postgres runtime SQL tools

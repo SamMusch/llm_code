@@ -1,17 +1,50 @@
 **Conceptual notes**: [sammusch.github.io](https://sammusch.github.io/ds-garden/LLM-RAG/01-RAG-Intro/)
-
 - Initial code based on [textbook](https://learning.oreilly.com/library/view/a-simple-guide/9781633435858/OEBPS/Text/part-1.html) & [github code](https://github.com/abhinav-kimothi/A-Simple-Guide-to-RAG)
-
 - Refactored to adopt LangChain/Graph/Smith.
 
-
 ### Architecture (local)
+- **Ollama (host or container)**: Runs the models (LLM & embedding) as an HTTP service.
+- **llm_code (Docker)**: Handles ingestion / retrieval / prompting / orchestration.
+- **Docker Compose**: Runs app containers, wires them to Ollama.
 
-- **Ollama**: Runs a local LLM as an HTTP service.
-- **llm_code**: Handles ingestion, retrieval, prompting, and orchestration.
-- **Docker Compose**: Defines how services run, connect, and persist data.
+### Runtime modes (local)
+`llm_code` supports two local runtime modes:
 
-Pre-reqs: **Docker Desktop** & a **LangSmith** account
+**Option A | Ollama.app on host (recommended)**
+- Ollama runs natively on macOS (`/Applications/Ollama.app`)
+- Docker containers call `host.docker.internal:11434`
+
+**Option B | Ollama in Docker**
+- Ollama runs as a Docker container
+- Containers call `ollama:11434`
+
+**Pre-reqs**: 
+- Docker Desktop
+- LangSmith (optional)
+
+
+```bash
+Local runtime (Docker + Mac host)
+
+Browser (you)
+  ↓
+http://localhost:8080
+FastAPI (UI + API)
+  ↓
+http://localhost:2024
+LangGraph (agent / orchestration)
+  ↓
+http://localhost:11434
+Ollama.app (LLM + embeddings)
+
+Observability (airgapped)
+FastAPI / LangGraph
+  → OTEL → http://otel-collector:4318
+  → Tempo (traces) :3200
+  → Loki (logs)   :3100
+  → Prometheus   :9090
+  → Grafana UI   http://localhost:3000
+```
 
 
 ### Install instructions
@@ -34,28 +67,30 @@ cd llm_code
 ```
 
 ```bash
-# STEP 2 | create a `.env` file
-OPENAI_API_KEY=sk-proj-...
-LANGCHAIN_API_KEY=lsv2_pt_...
-LANGSMITH_API_KEY=lsv2_pt_...   # same as ^
-LANGCHAIN_TRACING_V2=true
-LANGSMITH_PROJECT=llm_code      # folder name
+# STEP 2 | create a `.env` file (minimal local example)
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_EMBED_MODEL=nomic-embed-text
 ```
 
 ```bash
 # STEP 3 | GET MODEL
 
-# start the system (Ollama model server + llm_code RAG app)
+## Option A — Ollama.app on host (recommended)
+
+# ensure Ollama.app is running
+ollama pull llama3.2:1b
+ollama pull nomic-embed-text
+ollama list
+
 docker compose up -d --build
 
-# 
+## Option B — Ollama in Docker
 
-# pull a local CHAT model
-docker exec -it ollama ollama pull rfsousa/qwen2.5vl:tools
-docker exec -it ollama ollama list
+docker compose up -d --build
 
-# pull a local EMBEDDING model
-docker exec -it ollama ollama pull mxbai-embed-large
+docker exec -it ollama ollama pull llama3.2:1b
+docker exec -it ollama ollama pull nomic-embed-text
 docker exec -it ollama ollama list
 ```
 
@@ -78,7 +113,4 @@ docker compose exec llm_code python -m rag.cli index
 
 # ask question via cli
 docker compose exec llm_code python -m rag.cli ask "test question"
-
-# launch langsmith
-# https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
 ```

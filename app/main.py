@@ -603,6 +603,7 @@ async def chat_stream(
 
         full: list[str] = []
         stripper = _TaggedBlockStripper()
+        saw_token = False
 
         steps_cb = StepSpanCallbackHandler(
             max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
@@ -647,6 +648,7 @@ async def chat_stream(
                         full.append(cleaned)
 
                         safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
+                        saw_token = True
                         yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
                         continue
 
@@ -708,6 +710,53 @@ async def chat_stream(
                                 step[k] = step[k][:max_chars] + "...(truncated)"
 
                         yield f"event: step\ndata: {json.dumps(step, default=str)}\n\n".encode("utf-8")
+                        continue
+
+                    # 3) Non-streaming models: emit final text on end
+                    if kind in {"on_chat_model_end", "on_llm_end"} and (not saw_token):
+                        data = event.get("data") or {}
+                        out = data.get("output")
+
+                        text = ""
+
+                        # ChatResult-like
+                        if hasattr(out, "generations"):
+                            gens = getattr(out, "generations") or []
+                            if gens:
+                                g0 = gens[0]
+                                msg = getattr(g0, "message", None)
+                                if msg is not None and hasattr(msg, "content"):
+                                    text = extract_text_from_stream_delta(getattr(msg, "content", None))
+                                else:
+                                    t = getattr(g0, "text", None)
+                                    if t:
+                                        text = str(t)
+
+                        # Dict-like (Bedrock/Converse shapes)
+                        elif isinstance(out, dict):
+                            try:
+                                content = out.get("output", {}).get("message", {}).get("content")
+                                if content:
+                                    text = extract_text_from_stream_delta(content)
+                            except Exception:
+                                pass
+                            if not text:
+                                for k in ("text", "content", "output_text", "completion"):
+                                    if out.get(k):
+                                        text = str(out[k])
+                                        break
+
+                        # Message-like
+                        elif out is not None and hasattr(out, "content"):
+                            text = extract_text_from_stream_delta(getattr(out, "content", None))
+
+                        if text:
+                            cleaned = stripper.feed(text)
+                            if cleaned:
+                                full.append(cleaned)
+                                saw_token = True
+                                safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
+                                yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
                         continue
             except Exception as e:
                 # Surface a readable error to the client; the outer finally will still persist what we have.

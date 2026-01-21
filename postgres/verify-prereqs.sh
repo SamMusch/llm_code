@@ -20,6 +20,8 @@ set -euo pipefail
 # Optional overrides (env vars):
 #   AWS_REGION (else uses aws configure)
 #   CLUSTER_NAME, SERVICE_NAME, DB_INSTANCE_ID, POSTGRES_SECRET_NAME
+#   ENFORCE_PRIVATE_SUBNETS=1 (default: 0) to fail if subnets are public
+#   INCLUDE_EXTENDED_AWS=1 (default: 1) to include ECS/ALB/ECR/CloudWatch inventory
 #
 # Notes:
 # - Requires AWS CLI to be configured/authenticated for the target account.
@@ -90,6 +92,24 @@ fi
 
 echo "ECS cluster is ACTIVE; service exists: ${SERVICE_NAME}"
 
+# Extended inventory toggle (read-only)
+export INCLUDE_EXTENDED_AWS="${INCLUDE_EXTENDED_AWS:-1}"
+
+# Service networking facts (descriptive)
+export ASSIGN_PUBLIC_IP="$(echo "$SERVICE_JSON" | jq -r '.services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp // empty')"
+export SERVICE_SECURITY_GROUP_IDS="$(echo "$SERVICE_JSON" | jq -r '.services[0].networkConfiguration.awsvpcConfiguration.securityGroups[]?')"
+if [ -n "${ASSIGN_PUBLIC_IP}" ]; then
+  echo "ECS service assignPublicIp=${ASSIGN_PUBLIC_IP}"
+fi
+if [ -n "${SERVICE_SECURITY_GROUP_IDS}" ]; then
+  echo "ECS service security groups:"
+  echo "$SERVICE_SECURITY_GROUP_IDS" | sed 's/^/  - /'
+fi
+
+# By default this script is used for audit/read-only inventory and will not fail on public subnet settings.
+# Set ENFORCE_PRIVATE_SUBNETS=1 to require private subnets (MapPublicIpOnLaunch=False) and fail if violated.
+export ENFORCE_PRIVATE_SUBNETS="${ENFORCE_PRIVATE_SUBNETS:-0}"
+
 # -----------------------------
 # 3) VPC and private subnets
 # -----------------------------
@@ -120,24 +140,26 @@ for subnet in $SUBNET_IDS; do
     --output text 2>/dev/null || true)"
 
   if [ "${MAP_PUBLIC}" != "False" ]; then
-    echo "ERROR: Subnet ${subnet} assigns public IPs (MapPublicIpOnLaunch=${MAP_PUBLIC})."
-    echo "Failure means: ECS is running in a public subnet, violating private-only access."
-    exit 1
+    if [ "${ENFORCE_PRIVATE_SUBNETS}" = "1" ]; then
+      echo "ERROR: Subnet ${subnet} assigns public IPs (MapPublicIpOnLaunch=${MAP_PUBLIC})."
+      echo "Failure means: ECS is running in a public subnet, violating private-only access."
+      exit 1
+    else
+      echo "WARN: Subnet ${subnet} assigns public IPs (MapPublicIpOnLaunch=${MAP_PUBLIC})."
+      echo "WARN: Audit mode continues. Private-only access is NOT enforced unless ENFORCE_PRIVATE_SUBNETS=1."
+    fi
   fi
 done
 
-echo "Validated private subnets:"
+echo "Subnets (private-only enforced: ${ENFORCE_PRIVATE_SUBNETS}):"
 echo "$SUBNET_IDS" | sed 's/^/  - /'
 echo "VPC_ID=${VPC_ID}"
 
 # -----------------------------
 # 4) Required VPC endpoints
 # -----------------------------
-# For private subnets with assignPublicIp=DISABLED, these endpoints allow:
-# - pulling images from ECR
-# - writing logs to CloudWatch
-# - ECS Exec via SSM
-# - ECS API connectivity (in private-only networks)
+# These endpoints are commonly required when ECS tasks do not have direct internet egress.
+# They support pulling images from ECR, writing logs to CloudWatch, and ECS Exec via SSM.
 REQUIRED_ENDPOINTS=(
   s3
   ecr.api
@@ -220,22 +242,89 @@ echo "Secrets Manager secret found (credentials stored in AWS): ${POSTGRES_SECRE
 # -----------------------------
 cat <<EOF
 
-OK: prereqs satisfied.
+OK: audit checks completed.
 
-Exported variables:
+Key facts:
 - AWS_REGION=${AWS_REGION}
 - ACCOUNT_ID=${ACCOUNT_ID}
 - CLUSTER_NAME=${CLUSTER_NAME}
 - SERVICE_NAME=${SERVICE_NAME}
 - VPC_ID=${VPC_ID}
 - SUBNET_IDS=$(echo "$SUBNET_IDS" | tr '\n' ' ' | sed 's/ *$//')
+- ASSIGN_PUBLIC_IP=${ASSIGN_PUBLIC_IP:-unknown}
+- SERVICE_SECURITY_GROUP_IDS=$(echo "$SERVICE_SECURITY_GROUP_IDS" | tr '\n' ' ' | sed 's/ *$//')
 - DB_INSTANCE_ID=${DB_INSTANCE_ID}
 - RDS_ENDPOINT=${RDS_ENDPOINT}
 - POSTGRES_SECRET_NAME=${POSTGRES_SECRET_NAME}
 - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN}
+- PRIVATE_ONLY_ENFORCED=${ENFORCE_PRIVATE_SUBNETS}
 
-Next:
-- build/push db-tools image to ECR using ACCOUNT_ID/AWS_REGION
-- run one-off db-tools ECS task in SUBNET_IDS (private) with assignPublicIp=DISABLED
-- ECS Exec into task for controlled admin actions, then stop the task
 EOF
+
+# -----------------------------
+# Extended AWS inventory (ECS/ALB/ECR/CloudWatch)
+# -----------------------------
+if [ "${INCLUDE_EXTENDED_AWS}" = "1" ]; then
+  export TASK_DEFINITION_ARN="$(echo "$SERVICE_JSON" | jq -r '.services[0].taskDefinition // empty')"
+  if [ -n "${TASK_DEFINITION_ARN}" ]; then
+    echo "ECS task definition: ${TASK_DEFINITION_ARN}"
+
+    TD_JSON="$(aws ecs describe-task-definition \
+      --region "$AWS_REGION" \
+      --task-definition "$TASK_DEFINITION_ARN" \
+      --output json 2>/dev/null || true)"
+
+    export TASK_DEFINITION_FAMILY="$(echo "$TD_JSON" | jq -r '.taskDefinition.family // empty')"
+    export TASK_DEFINITION_REVISION="$(echo "$TD_JSON" | jq -r '.taskDefinition.revision // empty')"
+    export CONTAINER_NAMES="$(echo "$TD_JSON" | jq -r '.taskDefinition.containerDefinitions[].name')"
+    export CONTAINER_IMAGES="$(echo "$TD_JSON" | jq -r '.taskDefinition.containerDefinitions[].image')"
+    export CLOUDWATCH_LOG_GROUPS="$(echo "$TD_JSON" | jq -r '.taskDefinition.containerDefinitions[].logConfiguration.options["awslogs-group"]?')"
+
+    if [ -n "${TASK_DEFINITION_FAMILY}" ]; then
+      echo "Task family: ${TASK_DEFINITION_FAMILY}"; fi
+    if [ -n "${TASK_DEFINITION_REVISION}" ]; then
+      echo "Task revision: ${TASK_DEFINITION_REVISION}"; fi
+
+    if [ -n "${CONTAINER_NAMES}" ]; then
+      echo "Task containers:"; echo "$CONTAINER_NAMES" | sed 's/^/  - /'; fi
+    if [ -n "${CONTAINER_IMAGES}" ]; then
+      echo "Task images:"; echo "$CONTAINER_IMAGES" | sed 's/^/  - /'; fi
+    if [ -n "${CLOUDWATCH_LOG_GROUPS}" ]; then
+      echo "CloudWatch log groups (from task definition):"; echo "$CLOUDWATCH_LOG_GROUPS" | sed 's/^/  - /'; fi
+
+    # Derive ECR repository names from image URIs (best-effort)
+    ECR_REPOS_DERIVED="$(echo "$CONTAINER_IMAGES" | sed -n 's#^[0-9]\{12\}\.dkr\.ecr\.[^/]\+\.amazonaws\.com/\([^:@]\+\).*#\1#p' | sort -u)"
+    if [ -n "${ECR_REPOS_DERIVED}" ]; then
+      echo "ECR repositories (derived from images):"; echo "$ECR_REPOS_DERIVED" | sed 's/^/  - /'
+    fi
+  fi
+
+  # Load balancer / target group bindings (from ECS service)
+  export TARGET_GROUP_ARNS="$(echo "$SERVICE_JSON" | jq -r '.services[0].loadBalancers[].targetGroupArn?')"
+  if [ -n "${TARGET_GROUP_ARNS}" ]; then
+    echo "Target groups (from ECS service):"; echo "$TARGET_GROUP_ARNS" | sed 's/^/  - /'
+
+    # Attempt to resolve ALB ARNs and DNS names from target groups (best-effort)
+    TG_JSON="$(aws elbv2 describe-target-groups \
+      --region "$AWS_REGION" \
+      --target-group-arns $(echo "$TARGET_GROUP_ARNS" | tr '\n' ' ') \
+      --output json 2>/dev/null || true)"
+
+    export LOAD_BALANCER_ARNS="$(echo "$TG_JSON" | jq -r '.TargetGroups[].LoadBalancerArns[]?' | sort -u)"
+    if [ -n "${LOAD_BALANCER_ARNS}" ]; then
+      echo "Load balancers (from target groups):"; echo "$LOAD_BALANCER_ARNS" | sed 's/^/  - /'
+
+      LB_JSON="$(aws elbv2 describe-load-balancers \
+        --region "$AWS_REGION" \
+        --load-balancer-arns $(echo "$LOAD_BALANCER_ARNS" | tr '\n' ' ') \
+        --output json 2>/dev/null || true)"
+
+      export LOAD_BALANCER_NAMES="$(echo "$LB_JSON" | jq -r '.LoadBalancers[].LoadBalancerName?')"
+      export LOAD_BALANCER_DNS_NAMES="$(echo "$LB_JSON" | jq -r '.LoadBalancers[].DNSName?')"
+      if [ -n "${LOAD_BALANCER_NAMES}" ]; then
+        echo "Load balancer names:"; echo "$LOAD_BALANCER_NAMES" | sed 's/^/  - /'; fi
+      if [ -n "${LOAD_BALANCER_DNS_NAMES}" ]; then
+        echo "Load balancer DNS names:"; echo "$LOAD_BALANCER_DNS_NAMES" | sed 's/^/  - /'; fi
+    fi
+  fi
+fi

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
@@ -52,28 +53,24 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(model=model_name)
-    elif provider in {"google", "gemini", "google-genai", "google_genai"}:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-
-        llm = ChatGoogleGenerativeAI(model=model_name)
-    elif provider == "bedrock":
+    if provider == "bedrock":
         import boto3
-        from langchain_aws import ChatBedrock
+        from pydantic import ValidationError
 
-        region = (
-            os.environ.get("AWS_REGION")
-            or os.environ.get("AWS_DEFAULT_REGION")
-            or "us-east-1"
-        )
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
         bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
-        llm = ChatBedrock(
-            client=bedrock_runtime,
-            model_id=model_name,
-        )
+
+        try:
+            from langchain_aws import ChatBedrockConverse as BedrockChat
+            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)  # NO streaming kw
+        except Exception:
+            from langchain_aws import ChatBedrock as BedrockChat
+            try:
+                llm = BedrockChat(client=bedrock_runtime, model_id=model_name, streaming=True)
+            except TypeError:
+                llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
+
+
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
 

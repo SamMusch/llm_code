@@ -1,17 +1,10 @@
 {
-  "graphs": {
-    "agent": "rag.agent:create_agent"
-  },
+  "graphs": { "agent": "rag.agent:create_agent" },
   "env": ".env",
   "dependencies": ["."],
   "http": {
     "cors": {
-      "allow_origins": [
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-        "http://127.0.0.1:2024",
-        "http://localhost:2024"
-      ],
+      "allow_origins": ["http://localhost:8080"],
       "allow_credentials": true,
       "allow_methods": ["*"],
       "allow_headers": ["*"]
