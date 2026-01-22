@@ -222,13 +222,9 @@ def _trace_id_hex() -> str:
     except Exception:
         return ""
 
-
 @app.get("/", response_class=HTMLResponse)
 async def landing(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
-
-
-
 
 @app.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request):
@@ -236,11 +232,6 @@ async def app_page(request: Request):
     # full_bleed lets the chat UI take the full viewport (no outer container/topbar spacing).
     return templates.TemplateResponse("app.html", {"request": request, "full_bleed": True})
 
-
-
-# ALB+Cognito redirects here after successful auth.
-# We do not need to process the authorization code in the app when ALB is doing
-# authentication. Redirect users to the protected app page.
 @app.get("/oauth2/idpresponse")
 async def oauth2_idpresponse(request: Request):
     """ALB+Cognito redirects here after successful auth.
@@ -250,12 +241,6 @@ async def oauth2_idpresponse(request: Request):
     """
     return RedirectResponse(url="/app", status_code=302)
 
-
-
-# Log out of ALB session + Cognito hosted UI.
-# ALB uses its own session cookie; clearing it is handled by the ALB listener rule
-# on `/logout*`. We still provide this route so the UI can link to `/logout` and
-# consistently land users back on the site.
 @app.get("/logout")
 async def logout(request: Request):
     """Log out of ALB session + Cognito hosted UI.

@@ -8,12 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
-from langchain.agents.middleware import (
-    AgentState,
-    before_model,
-    ModelCallLimitMiddleware,
-    ToolCallLimitMiddleware,
-)
+from langchain.agents.middleware import *
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 
@@ -71,7 +66,6 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
 
     if provider == "bedrock":
         import boto3
-
         region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
         bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
 
@@ -82,26 +76,23 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
             llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
         except Exception as e:
             log.warning(
-                f"[agent] ChatBedrockConverse unavailable or failed; falling back to ChatBedrock. err={e}"
-            )
+                f"[agent] ChatBedrockConverse unavailable or failed; falling back to ChatBedrock. err={e}")
             from langchain_aws import ChatBedrock as BedrockChat
             llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
 
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
-
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-            temperature=0,
-        )
+            temperature=0,)
     else:
         try:
             from langchain_openai import ChatOpenAI
-
             llm = ChatOpenAI(model=model_name, base_url=os.environ.get("OPENAI_API_BASE"))
         except Exception:
             raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
+
 
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
@@ -111,11 +102,19 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         tools += get_sql_database_tools(llm, cfg)
     llm = llm.bind_tools(tools)
 
-    # Hard stop on runaway loops (per single user turn). Use run_limit only so we don't require a checkpointer.
-    model_call_limiter = ModelCallLimitMiddleware(run_limit=6, exit_behavior="end")
+    #lang_model_call_limiter = ModelCallLimitMiddleware(run_limit=20)
+    #lang_model_retry = ModelRetryMiddleware()
+    #lang_tool_call_limiter_global = ToolCallLimitMiddleware(run_limit=50, exit_behavior="continue")
+    #lang_tool_retry = ToolRetryMiddleware()
+    #lang_summarize_auto = SummarizationMiddleware(model = llm)
+    
+    # NOT USING FOR NOW
+    # lang_model_fallback = ModelFallbackMiddleware()
+    # lang_pii = PIIMiddleware()
+    # lang_file_search = FilesystemFileSearchMiddleware()
+
 
     # Global tool-call limiter + tool-specific caps for the most expensive/loop-prone tools.
-    tool_call_limiter = ToolCallLimitMiddleware(run_limit=10, exit_behavior="continue")
     search_docs_limiter = ToolCallLimitMiddleware(tool_name="search_docs", run_limit=3, exit_behavior="continue")
     sql_query_limiter = ToolCallLimitMiddleware(tool_name="sql_db_query", run_limit=3, exit_behavior="continue")
 
@@ -123,18 +122,12 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         model=llm,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[model_call_limiter,
-            tool_call_limiter,
-            search_docs_limiter,
-            sql_query_limiter,
-            trim_history,
-            sql_write_guard,
-            intent_router_hints,
-            docs_first_autosearch,
-            hallucination_guard_hints,
-            context_relevance_hint,
-            force_list_tables,
-            # stop_after_final_answer # last
+        middleware=[
+            #lang_model_call_limiter,
+            #lang_model_retry,
+            #lang_tool_call_limiter_global,
+            #lang_tool_retry,
+            #lang_summarize_auto,
         ]
     )
     return agent
