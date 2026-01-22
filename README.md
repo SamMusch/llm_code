@@ -114,3 +114,5 @@ docker compose exec llm_code python -m rag.cli index
 # ask question via cli
 docker compose exec llm_code python -m rag.cli ask "test question"
 ```
+
+
