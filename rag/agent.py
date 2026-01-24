@@ -8,7 +8,8 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
-from langchain.agents.middleware import *
+from langchain.agents.middleware import ModelFallbackMiddleware, ModelRetryMiddleware, ToolRetryMiddleware
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 
@@ -52,6 +53,16 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     provider = cfg.llm_provider
     model_name = cfg.llm_model
 
+    # Middleware knobs (env-only for now)
+    enable_model_retry = os.getenv("MIDDLEWARE_MODEL_RETRY", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    enable_tool_retry = os.getenv("MIDDLEWARE_TOOL_RETRY", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    enable_model_fallback = os.getenv("MIDDLEWARE_MODEL_FALLBACK", "false").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+    model_retries = int(os.getenv("MIDDLEWARE_MODEL_RETRY_MAX_RETRIES", "2"))
+    tool_retries = int(os.getenv("MIDDLEWARE_TOOL_RETRY_MAX_RETRIES", "2"))
+
+    fallback_model_name = os.getenv("LLM_FALLBACK_MODEL", "").strip() or None
+
     # Fail fast with a readable error instead of silently producing start/meta/end only.
     if not provider:
         raise ValueError(
@@ -80,12 +91,28 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
             from langchain_aws import ChatBedrock as BedrockChat
             llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
 
+        fallback_llm = None
+        if fallback_model_name:
+            try:
+                from langchain_aws import ChatBedrockConverse as BedrockChat
+                fallback_llm = BedrockChat(client=bedrock_runtime, model_id=fallback_model_name)
+            except Exception:
+                from langchain_aws import ChatBedrock as BedrockChat
+                fallback_llm = BedrockChat(client=bedrock_runtime, model_id=fallback_model_name)
+
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
             temperature=0,)
+        fallback_llm = None
+        if fallback_model_name:
+            fallback_llm = ChatOllama(
+                model=fallback_model_name,
+                base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
+                temperature=0,
+            )
     else:
         try:
             from langchain_openai import ChatOpenAI
@@ -93,42 +120,64 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         except Exception:
             raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
 
+        fallback_llm = None
+        if fallback_model_name:
+            try:
+                fallback_llm = ChatOpenAI(model=fallback_model_name, base_url=os.environ.get("OPENAI_API_BASE"))
+            except Exception:
+                fallback_llm = None
+
 
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
     # Postgres tools are opt-in (UI-controlled). Only enable when explicitly selected.
     selected = set(t.lower() for t in (selected_tools or []))
     if "database" in selected:
-        tools += get_sql_database_tools(llm, cfg)
+        # Only enable Postgres tools when the UI has explicitly selected "Database".
+        tools += get_sql_database_tools(llm, cfg, enabled=True)
     llm = llm.bind_tools(tools)
-
-    #lang_model_call_limiter = ModelCallLimitMiddleware(run_limit=20)
-    #lang_model_retry = ModelRetryMiddleware()
-    #lang_tool_call_limiter_global = ToolCallLimitMiddleware(run_limit=50, exit_behavior="continue")
-    #lang_tool_retry = ToolRetryMiddleware()
-    #lang_summarize_auto = SummarizationMiddleware(model = llm)
-    
-    # NOT USING FOR NOW
-    # lang_model_fallback = ModelFallbackMiddleware()
-    # lang_pii = PIIMiddleware()
-    # lang_file_search = FilesystemFileSearchMiddleware()
-
+    if fallback_llm is not None:
+        fallback_llm = fallback_llm.bind_tools(tools)
 
     # Global tool-call limiter + tool-specific caps for the most expensive/loop-prone tools.
     search_docs_limiter = ToolCallLimitMiddleware(tool_name="search_docs", run_limit=3, exit_behavior="continue")
     sql_query_limiter = ToolCallLimitMiddleware(tool_name="sql_db_query", run_limit=3, exit_behavior="continue")
 
+    middleware = [
+        # Hard caps on loop-prone / expensive tools
+        search_docs_limiter,
+        sql_query_limiter,
+    ]
+
+    # Retries for transient network/provider hiccups
+    if enable_tool_retry:
+        middleware.append(
+            ToolRetryMiddleware(
+                max_retries=tool_retries,
+                backoff_factor=2.0,
+                initial_delay=1.0,
+                tools=["search_docs", "sql_db_query"],
+            )
+        )
+
+    if enable_model_retry:
+        middleware.append(
+            ModelRetryMiddleware(
+                max_retries=model_retries,
+                backoff_factor=2.0,
+                initial_delay=1.0,
+            )
+        )
+
+    # Provider/model fallback (opt-in; requires LLM_FALLBACK_MODEL)
+    if enable_model_fallback and fallback_llm is not None:
+        middleware.append(ModelFallbackMiddleware(fallback_llm))
+
     agent = _lc_create_agent(
         model=llm,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[
-            #lang_model_call_limiter,
-            #lang_model_retry,
-            #lang_tool_call_limiter_global,
-            #lang_tool_retry,
-            #lang_summarize_auto,
-        ]
+        middleware=middleware,
     )
     return agent
 

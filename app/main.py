@@ -6,6 +6,7 @@ import uuid
 import logging
 import urllib.parse
 import json
+from functools import lru_cache
 from typing import AsyncIterator
 from pathlib import Path
 
@@ -13,12 +14,14 @@ import mimetypes
 import boto3
 
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import FileResponse
+from sse_starlette.sse import EventSourceResponse
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.messages.utils import convert_to_openai_messages
 
 from rag.agent import get_agent
 from rag.config import get_settings
@@ -212,6 +215,7 @@ async def llm_stream(messages: list[dict], *, callbacks: list | None = None) -> 
 
 
 # Helper to get current OTEL trace id (hex)
+
 def _trace_id_hex() -> str:
     try:
         span = trace.get_current_span()
@@ -219,6 +223,71 @@ def _trace_id_hex() -> str:
         if not ctx or not getattr(ctx, "trace_id", 0):
             return ""
         return f"{ctx.trace_id:032x}"
+    except Exception:
+        return ""
+
+
+def _short_json(v: object, limit: int = 800) -> str:
+    """Best-effort short JSON/string representation for logs."""
+    try:
+        s = json.dumps(v, default=str)
+    except Exception:
+        try:
+            s = str(v)
+        except Exception:
+            s = "<unprintable>"
+    if len(s) > limit:
+        return s[:limit] + "...(truncated)"
+    return s
+
+
+def _text_from_any(v: object) -> str:
+    """Best-effort extraction of text from various LangChain/Bedrock shapes.
+
+    Bedrock Converse often returns content blocks like:
+      [{"type": "text", "text": "..."}]
+    """
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        parts: list[str] = []
+        for it in v:
+            if it is None:
+                continue
+            if isinstance(it, str):
+                parts.append(it)
+                continue
+
+            # Bedrock Converse / Nova commonly returns content blocks (dicts).
+            # Only emit actual text; never stringify dicts.
+            if isinstance(it, dict):
+                t = it.get("text")
+                if t:
+                    parts.append(str(t))
+                    continue
+                nested = it.get("content")
+                if nested:
+                    parts.append(_text_from_any(nested))
+                    continue
+                # No usable text in this block
+                continue
+
+            # Fallback for non-dict objects
+            try:
+                parts.append(str(it))
+            except Exception:
+                pass
+
+        return "".join(parts)
+    if isinstance(v, dict):
+        for k in ("text", "content", "output_text", "completion"):
+            if v.get(k):
+                return _text_from_any(v.get(k))
+        return ""
+    try:
+        return extract_text_from_stream_delta(v) or ""
     except Exception:
         return ""
 
@@ -281,45 +350,27 @@ async def api_chat_non_stream(request: Request):
     return await chat_non_stream(request)
 
 
+
 def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
-    out = []
-    for m in msgs:
-        if isinstance(m, HumanMessage):
-            out.append({"role": "user", "content": m.content})
-        elif isinstance(m, AIMessage):
-            out.append({"role": "assistant", "content": m.content})
-        elif isinstance(m, SystemMessage):
-            out.append({"role": "system", "content": m.content})
-        else:
-            # fallback
-            out.append({"role": "user", "content": str(m.content)})
-    return out
+    """Convert LangChain messages into OpenAI-style dicts: {role, content}.
+
+    This keeps our downstream expectations intact while delegating conversion logic to LangChain.
+    """
+    try:
+        converted = convert_to_openai_messages(msgs)
+        # convert_to_openai_messages returns list[dict] for a sequence input
+        return list(converted) if isinstance(converted, list) else [converted]
+    except Exception:
+        # Fallback: preserve behavior in worst case
+        out: list[dict] = []
+        for m in msgs:
+            try:
+                out.append({"role": "user", "content": str(getattr(m, "content", ""))})
+            except Exception:
+                out.append({"role": "user", "content": ""})
+        return out
 
 
-def strip_thinking(text: str) -> str:
-    """Remove model 'thinking' blocks from streamed text."""
-    if not text:
-        return ""
-
-    # Common wrappers seen in some model outputs
-    pairs = [
-        ("<thinking>", "</thinking>"),
-        ("<analysis>", "</analysis>"),
-    ]
-    for open_tag, close_tag in pairs:
-        while True:
-            start = text.find(open_tag)
-            if start == -1:
-                break
-            end = text.find(close_tag, start)
-            if end == -1:
-                # If we only got the opening tag so far, drop from tag onward
-                text = text[:start]
-                break
-            end = end + len(close_tag)
-            text = (text[:start] + text[end:])
-
-    return text
 
 
 class _TaggedBlockStripper:
@@ -408,8 +459,13 @@ class _TaggedBlockStripper:
         return out
 
 
+
+@lru_cache(maxsize=1)
 def _ddb_table():
-    """Return the DynamoDB table used for chat history."""
+    """Return the DynamoDB table used for chat history.
+
+    Cached to avoid re-creating boto3 resources per request.
+    """
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
     table_name = os.getenv("DDB_TABLE", "rag_chat_history")
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
@@ -522,9 +578,9 @@ async def chat_stream(
 ):
     msg = (message or "").strip()
     if not msg:
-        async def empty() -> AsyncIterator[bytes]:
-            yield b"event: error\ndata: Missing message\n\n"
-        return StreamingResponse(empty(), media_type="text/event-stream")
+        async def empty() -> AsyncIterator[dict]:
+            yield {"event": "error", "data": "Missing message"}
+        return EventSourceResponse(empty())
 
     sid = session_id or request.headers.get("X-Session-Id") or str(uuid.uuid4())
     history = DynamoDBChatMessageHistory(session_id=sid, limit=20)
@@ -583,74 +639,13 @@ async def chat_stream(
         log.exception(f"DDB read FAILED session_id={sid}: {e}")
         context_msgs = [{"role": "user", "content": msg}]
 
-    async def event_gen() -> AsyncIterator[bytes]:
-        yield b"event: start\ndata: ok\n\n"
+    async def event_gen() -> AsyncIterator[dict]:
+        yield {"event": "start", "data": "ok"}
 
         full: list[str] = []
         stripper = _TaggedBlockStripper()
         saw_token = False
 
-        def _short(v: object, limit: int = 800) -> str:
-            try:
-                s = json.dumps(v, default=str)
-            except Exception:
-                try:
-                    s = str(v)
-                except Exception:
-                    s = "<unprintable>"
-            if len(s) > limit:
-                return s[:limit] + "...(truncated)"
-            return s
-
-        def _text_from_any(v: object) -> str:
-            """Best-effort extraction of text from various LangChain/Bedrock shapes.
-
-            Bedrock Converse often returns content blocks like:
-              [{"type": "text", "text": "..."}]
-            """
-            if v is None:
-                return ""
-            if isinstance(v, str):
-                return v
-            if isinstance(v, list):
-                parts: list[str] = []
-                for it in v:
-                    if it is None:
-                        continue
-                    if isinstance(it, str):
-                        parts.append(it)
-                        continue
-
-                    # Bedrock Converse / Nova commonly returns content blocks (dicts).
-                    # Only emit actual text; never stringify dicts.
-                    if isinstance(it, dict):
-                        t = it.get("text")
-                        if t:
-                            parts.append(str(t))
-                            continue
-                        nested = it.get("content")
-                        if nested:
-                            parts.append(_text_from_any(nested))
-                            continue
-                        # No usable text in this block
-                        continue
-
-                    # Fallback for non-dict objects
-                    try:
-                        parts.append(str(it))
-                    except Exception:
-                        pass
-
-                return "".join(parts)
-            if isinstance(v, dict):
-                for k in ("text", "content", "output_text", "completion"):
-                    if v.get(k):
-                        return _text_from_any(v.get(k))
-                return ""
-            try:
-                return extract_text_from_stream_delta(v) or ""
-            except Exception:
-                return ""
 
         steps_cb = StepSpanCallbackHandler(
             max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
@@ -659,7 +654,7 @@ async def chat_stream(
 
         trace_id = _trace_id_hex()
         meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools})
-        yield f"event: meta\ndata: {meta}\n\n".encode("utf-8")
+        yield {"event": "meta", "data": meta}
 
         try:
             cfg = get_settings()
@@ -686,7 +681,7 @@ async def chat_stream(
                             continue
                         delta = getattr(chunk, "content", None)
                         if isinstance(delta, (list, dict)):
-                            log.warning(f"[chat_stream] stream delta type={type(delta)} sample={_short(delta)}")
+                            log.warning(f"[chat_stream] stream delta type={type(delta)} sample={_short_json(delta)}")
                         text = _text_from_any(delta)
                         if not text:
                             continue
@@ -698,7 +693,7 @@ async def chat_stream(
 
                         safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
                         saw_token = True
-                        yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
+                        yield {"event": "token", "data": safe}
                         continue
 
                     # 2) Tool steps (LangSmith-like)
@@ -758,14 +753,14 @@ async def chat_stream(
                             if k in step and isinstance(step[k], str) and len(step[k]) > max_chars:
                                 step[k] = step[k][:max_chars] + "...(truncated)"
 
-                        yield f"event: step\ndata: {json.dumps(step, default=str)}\n\n".encode("utf-8")
+                        yield {"event": "step", "data": json.dumps(step, default=str)}
                         continue
 
                     # 3) Non-streaming models: emit final text on end
                     if kind in {"on_chat_model_end", "on_llm_end"} and (not saw_token):
                         data = event.get("data") or {}
                         out = data.get("output")
-                        log.warning(f"[chat_stream] end output type={type(out)} sample={_short(out)}")
+                        log.warning(f"[chat_stream] end output type={type(out)} sample={_short_json(out)}")
 
                         text = ""
 
@@ -806,85 +801,20 @@ async def chat_stream(
                                 full.append(cleaned)
                                 saw_token = True
                                 safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
-                                yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
+                                yield {"event": "token", "data": safe}
                         continue
 
-                # Fallback: if the underlying model doesn't emit token stream events (or streaming is disabled),
-                # do a single-shot invoke and emit one final token.
-                if not saw_token:
-                    log.warning(
-                        f"[chat_stream] No streamed tokens seen; falling back to ainvoke() session_id={sid} trace_id={trace_id}"
-                    )
-                    result = await agent.ainvoke(inputs, config=lg_cfg)
-                    log.warning(
-                        f"[chat_stream] ainvoke result type={type(result)} sample={_short(result)}"
-                    )
-
-                    final_text = ""
-                    try:
-                        # Common LangGraph shape: {"messages": [...]} where we need to find a non-empty AI message
-                        if isinstance(result, dict):
-                            msgs = result.get("messages") or []
-                            log.warning(f"[chat_stream] ainvoke messages count={len(msgs)}")
-                            if msgs:
-                                # Walk backwards to find the first non-empty *AI* message content.
-                                # Avoid emitting SystemMessage/HumanMessage/tool scaffolding.
-                                for m in reversed(msgs):
-                                    try:
-                                        mtype = type(m)
-                                        content = getattr(m, "content", None)
-                                        text = _text_from_any(content)
-                                        log.warning(
-                                            f"[chat_stream] ainvoke scan type={mtype} content_sample={_short(content)}"
-                                        )
-
-                                        # Prefer only AI messages
-                                        if mtype.__name__ != "AIMessage":
-                                            continue
-
-                                        if not text:
-                                            continue
-
-                                        # Skip common scaffolding strings
-                                        if text.strip().startswith("HallucinationGuard="):
-                                            continue
-                                        if text.strip().lower().startswith("calling "):
-                                            continue
-
-                                        final_text = text
-                                        break
-                                    except Exception:
-                                        continue
-
-                        # Direct message-like
-                        elif hasattr(result, "content"):
-                            final_text = _text_from_any(getattr(result, "content", None)) or str(
-                                getattr(result, "content", "") or ""
-                            )
-                    except Exception:
-                        final_text = ""
-
-                    final_text = (final_text or "").strip()
-                    if final_text:
-                        cleaned = stripper.feed(final_text)
-                        if cleaned:
-                            full.append(cleaned)
-                            saw_token = True
-                            safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
-                            yield f"event: token\ndata: {safe}\n\n".encode("utf-8")
-                    else:
-                        yield b"event: error\ndata: No output from ainvoke()\n\n"
             except Exception as e:
                 # Surface a readable error to the client; the outer finally will still persist what we have.
                 msg = str(e)
-                yield f"event: error\ndata: {msg}\n\n".encode("utf-8")
+                yield {"event": "error", "data": msg}
         finally:
             # Flush any remaining safe text (only when not inside a tagged block)
             tail = stripper.flush()
             if tail:
                 full.append(tail)
                 safe_tail = tail.replace("\r", "\\r").replace("\n", "\\n")
-                yield f"event: token\ndata: {safe_tail}\n\n".encode("utf-8")
+                yield {"event": "token", "data": safe_tail}
 
             if full:
                 try:
@@ -893,11 +823,10 @@ async def chat_stream(
                 except Exception as e:
                     log.exception(f"DDB assistant write FAILED session_id={sid}: {e}")
 
-        yield b"event: end\ndata: ok\n\n"
+        yield {"event": "end", "data": "ok"}
 
-    return StreamingResponse(
+    return EventSourceResponse(
         event_gen(),
-        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
