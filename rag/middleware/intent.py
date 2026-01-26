@@ -32,6 +32,7 @@ def classify_intent(q: str) -> Intent:
         "pgadmin",
         "sql",
         "schema",
+        "schemas",
         "table",
         "tables",
         "column",
@@ -94,7 +95,10 @@ def classify_intent(q: str) -> Intent:
 def intent_instructions(intent: Intent) -> str:
     if intent == "sql":
         return (
-            "Intent=SQL. Use ONLY database tools (sql_db_list_tables, sql_db_schema, sql_db_query). "
+            "Intent=SQL. Prefer LIGHTWEIGHT SQL queries via sql_db_query. "
+            "For listing schemas/tables/columns, query information_schema/pg_catalog (e.g., information_schema.schemata, information_schema.tables, information_schema.columns). "
+            "Avoid sql_db_schema unless the user explicitly asks for full schema details. "
+            "You may also use sql_db_list_tables. "
             "Do NOT use document tools unless the user explicitly asks about documents. "
             "Never answer database questions from memory; compute via tools."
         )
@@ -106,6 +110,7 @@ def intent_instructions(intent: Intent) -> str:
     if intent == "mixed":
         return (
             "Intent=MIXED. You may use BOTH document tools and SQL tools. "
+            "When you need DB facts, prefer sql_db_query with lightweight information_schema/pg_catalog queries; avoid sql_db_schema unless explicitly requested. "
             "First gather evidence (docs search/read and/or DB queries), then synthesize a single final answer."
         )
     return (

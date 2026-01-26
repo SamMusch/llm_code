@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from langchain.agents import create_agent as _lc_create_agent
 from langchain.agents.middleware import ModelFallbackMiddleware, ModelRetryMiddleware, ToolRetryMiddleware
 from langchain.agents.middleware import ToolCallLimitMiddleware
-from langchain_core.messages import BaseMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables import RunnableConfig
 
 from .config import Settings, get_settings
@@ -20,7 +20,7 @@ from .observability import setup_observability
 from .middleware.intent import Intent, classify_intent, intent_router_hints, last_human_text
 from .middleware.guards import hallucination_guard_hints, sql_write_guard
 from .middleware.context import context_relevance_hint, has_retrieved_sources, trim_history
-from .middleware.autosearch import docs_first_autosearch, force_list_tables
+from .middleware.autosearch import docs_first_autosearch, force_list_tables, force_list_schemas
 from .middleware.termination import stop_after_final_answer
 
 try:
@@ -105,7 +105,8 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         llm = ChatOllama(
             model=model_name,
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-            temperature=0,)
+            temperature=0,
+        )
         fallback_llm = None
         if fallback_model_name:
             fallback_llm = ChatOllama(
@@ -127,29 +128,45 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
             except Exception:
                 fallback_llm = None
 
-
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
     # Postgres tools are opt-in (UI-controlled). Only enable when explicitly selected.
     selected = set(t.lower() for t in (selected_tools or []))
-    if "database" in selected:
-        # Only enable Postgres tools when the UI has explicitly selected "Database".
+    db_enabled = "database" in selected
+    if db_enabled:
         tools += get_sql_database_tools(llm, cfg, enabled=True)
+
+    # Debug: confirm what the agent can actually call.
+    try:
+        tool_names = [getattr(t, "name", type(t).__name__) for t in tools]
+    except Exception:
+        tool_names = [type(t).__name__ for t in tools]
+    log.info(f"[agent] db_enabled={db_enabled} selected_tools={list(selected_tools or [])} tools={tool_names}")
+
     llm = llm.bind_tools(tools)
     if fallback_llm is not None:
         fallback_llm = fallback_llm.bind_tools(tools)
 
-    # Global tool-call limiter + tool-specific caps for the most expensive/loop-prone tools.
+    # Global tool-call limiter + tool-specific caps.
     search_docs_limiter = ToolCallLimitMiddleware(tool_name="search_docs", run_limit=3, exit_behavior="continue")
     sql_query_limiter = ToolCallLimitMiddleware(tool_name="sql_db_query", run_limit=3, exit_behavior="continue")
 
     middleware = [
-        # Hard caps on loop-prone / expensive tools
         search_docs_limiter,
         sql_query_limiter,
+        # Stop the agent loop once a final assistant answer has been produced.
+        stop_after_final_answer,
     ]
 
-    # Retries for transient network/provider hiccups
+    if db_enabled:
+        middleware += [
+            intent_router_hints,
+            hallucination_guard_hints,
+            sql_write_guard,
+            force_list_tables,
+            force_list_schemas,
+        ]
+
     if enable_tool_retry:
         middleware.append(
             ToolRetryMiddleware(
@@ -169,9 +186,18 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
             )
         )
 
-    # Provider/model fallback (opt-in; requires LLM_FALLBACK_MODEL)
     if enable_model_fallback and fallback_llm is not None:
         middleware.append(ModelFallbackMiddleware(fallback_llm))
+
+    # Debug: middleware list
+    try:
+        mw_names: list[str] = []
+        for m in middleware:
+            tn = getattr(m, "tool_name", None)
+            mw_names.append(f"{type(m).__name__}({tn})" if tn else type(m).__name__)
+    except Exception:
+        mw_names = [type(m).__name__ for m in middleware]
+    log.info(f"[agent] middleware={mw_names}")
 
     agent = _lc_create_agent(
         model=llm,
@@ -182,8 +208,6 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     return agent
 
 
-# ----
-# for langgraph
 def create_agent(config: RunnableConfig):
     cfg = get_settings()
     configurable = (config or {}).get("configurable", {})
@@ -191,8 +215,7 @@ def create_agent(config: RunnableConfig):
     return get_agent(cfg, selected_tools=selected_tools)
 
 
-# ----
-def run_agent(question: str, cfg: Settings | None = None) -> dict:
-    agent = get_agent(cfg, selected_tools=[])
+def run_agent(question: str, cfg: Settings | None = None, selected_tools: Optional[Sequence[str]] = None) -> dict:
+    agent = get_agent(cfg, selected_tools=selected_tools or [])
     state = agent.invoke({"messages": [{"role": "user", "content": question}]})
     return {"messages": state.get("messages", [])}

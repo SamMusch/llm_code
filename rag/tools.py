@@ -9,12 +9,51 @@ import logging
 import os
 
 from langchain.tools import tool
+from sqlalchemy.engine import Engine
 
 from .config import Settings
 from .retriever import load_retriever, build_index
 
+from functools import lru_cache
+from typing import Optional
+
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=4)
+def _cached_pg_engine(uri: str, schema: Optional[str]) -> Engine:
+    """Create (and cache) a small SQLAlchemy engine.
+
+    We avoid LangChain SQLDatabaseToolkit here because toolkit/database initialization can
+    trigger reflection/introspection that spikes memory in small ECS tasks.
+    """
+    from sqlalchemy import create_engine
+
+    # Fast fail + server-side statement timeout.
+    # Note: connect_timeout is libpq seconds; statement_timeout is ms.
+    opts = "-c statement_timeout=15000"
+    if schema:
+        opts = f"-c search_path={schema} -c statement_timeout=15000"
+
+    return create_engine(
+        uri,
+        pool_size=1,
+        max_overflow=0,
+        pool_pre_ping=True,
+        connect_args={
+            "connect_timeout": 5,
+            "options": opts,
+        },
+    )
+
+
+def _invalidate_pg_engine_cache() -> None:
+    """Clear cached engines (useful for local dev / hot reload)."""
+    try:
+        _cached_pg_engine.cache_clear()
+    except Exception:
+        pass
 
 
 def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
@@ -33,14 +72,13 @@ def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
 
 
 def get_sql_database_tools(llm, cfg: Settings | None = None, enabled: bool = False):
-    """Build LangChain SQLDatabaseToolkit tools for the configured Postgres DB.
+    """Return lightweight Postgres tools.
 
-    This follows LangChain's SQLDatabase toolkit pattern.
-    If Postgres isn't configured, returns an empty list.
+    IMPORTANT: Do NOT use SQLDatabaseToolkit/SQLDatabase here; their init can trigger
+    reflection-heavy work that OOMs small ECS tasks.
 
-    IMPORTANT:
-    - This must be fail-open (return []) if Postgres is temporarily unreachable,
-      so chat streaming does not crash.
+    We expose only `sql_db_query` (and an alias `sql_db_query_checker`). Listing schemas/tables
+    should be done via information_schema queries through sql_db_query.
     """
     if not enabled:
         return []
@@ -49,34 +87,66 @@ def get_sql_database_tools(llm, cfg: Settings | None = None, enabled: bool = Fal
     if not uri:
         return []
 
-    # Local import so Postgres deps are optional unless enabled.
-    from sqlalchemy.exc import OperationalError
-    from langchain_community.utilities.sql_database import SQLDatabase
-    from langchain_community.agent_toolkits import SQLDatabaseToolkit
-
-    # Schema scoping (preferred). DB-level enforcement should also be applied.
     schema = os.environ.get("POSTGRES_SCHEMA")
     if not schema and cfg is not None and hasattr(cfg, "postgres_schema"):
         v = getattr(cfg, "postgres_schema")
         schema = v if isinstance(v, str) and v else None
 
-    # Avoid LangChain/psycopg issue when `schema=` triggers `SET search_path TO %s`.
-    # Instead, set search_path at connection time via libpq options.
-    engine_args = {}
-    if schema:
-        engine_args = {"connect_args": {"options": f"-csearch_path={schema}"}}
-
     try:
-        db = SQLDatabase.from_uri(uri, engine_args=engine_args)
-        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-        return toolkit.get_tools()
-    except OperationalError as e:
-        logger.exception("Postgres unavailable; disabling SQL tools for this request", exc_info=e)
-        return []
+        engine = _cached_pg_engine(uri, schema)
     except Exception as e:
-        # Defensive: do not let SQL tool init crash /chat/stream.
-        logger.exception("Failed to initialize SQL tools; disabling SQL tools for this request", exc_info=e)
+        logger.exception("Failed to create Postgres engine; disabling SQL tools for this request", exc_info=e)
+        _invalidate_pg_engine_cache()
         return []
+
+    @tool("sql_db_query")
+    def sql_db_query(query: str) -> str:
+        """Run a READ-ONLY SQL query against Postgres and return a small result set."""
+        q = (query or "").strip().rstrip(";")
+        if not q:
+            return "Empty query."
+
+        # Block common write/ddl verbs.
+        lowered = q.lower()
+        blocked = ("insert ", "update ", "delete ", "drop ", "alter ", "create ", "truncate ")
+        if any(b in lowered for b in blocked):
+            return "Blocked: write/DDL statements are not allowed."
+
+        # Only allow single statement.
+        if ";" in q:
+            return "Only a single SQL statement is allowed."
+
+        from sqlalchemy import text
+
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(text(q))
+                if not res.returns_rows:
+                    return "Query executed. No rows returned."
+                cols = list(res.keys())
+                rows = res.fetchmany(200)
+        except Exception as e:
+            return f"SQL error: {e}"
+
+        if not rows:
+            return "(no rows)"
+
+        out = [" | ".join(cols), " | ".join(["---"] * len(cols))]
+        for r in rows:
+            out.append(" | ".join([str(v) if v is not None else "" for v in r]))
+        if len(rows) == 200:
+            out.append("(truncated to 200 rows)")
+        return "\n".join(out)
+
+    @tool("sql_db_query_checker")
+    def sql_db_query_checker(query: str) -> str:
+        """Lightweight checker: returns the query back (no-op).
+
+        Kept for compatibility with prompts/tooling that expect this tool.
+        """
+        return (query or "").strip()
+
+    return [sql_db_query, sql_db_query_checker]
 
 
 @tool
@@ -114,25 +184,17 @@ def run_sql_query(query: str) -> str:
 
     schema = os.environ.get("POSTGRES_SCHEMA") or getattr(cfg, "postgres_schema", None)
 
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import text
 
-    connect_args = {}
-    if schema:
-        connect_args = {"options": f"-csearch_path={schema}"}
-
-    engine = create_engine(uri, connect_args=connect_args, pool_pre_ping=True)
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(text(q)).fetchall()
-            if not rows:
-                return "(no rows)"
-            # Render as TSV for readability
-            out_lines = []
-            for r in rows:
-                out_lines.append("\t".join(str(x) for x in r))
-            return "\n".join(out_lines)
-    finally:
-        engine.dispose()
+    engine = _cached_pg_engine(uri, schema)
+    with engine.connect() as conn:
+        rows = conn.execute(text(q)).fetchall()
+        if not rows:
+            return "(no rows)"
+        out_lines = []
+        for r in rows:
+            out_lines.append("\t".join(str(x) for x in r))
+        return "\n".join(out_lines)
 
 
 @tool

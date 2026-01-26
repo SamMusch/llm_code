@@ -189,15 +189,25 @@ async def api_upload_files(session_id: str, files: list[UploadFile] = File(...))
 
 
 
-async def llm_stream(messages: list[dict], *, callbacks: list | None = None) -> AsyncIterator[str]:
+async def llm_stream(
+    messages: list[dict],
+    *,
+    callbacks: list | None = None,
+    selected_tools: list[str] | None = None,
+) -> AsyncIterator[str]:
     """Yield text chunks from the real LangChain/LangGraph agent."""
     cfg = get_settings()
-    agent = get_agent(cfg)
+    agent = get_agent(cfg, selected_tools=(selected_tools or []))
 
     # IMPORTANT: This must match what rag/agent.py expects
     inputs = {"messages": messages}
 
-    config = {"callbacks": callbacks} if callbacks else None
+    config = {
+        "callbacks": callbacks or [],
+        "configurable": {
+            "selected_tools": selected_tools or [],
+        },
+    }
     async for event in agent.astream_events(inputs, version="v2", config=config):
         if event.get("event") != "on_chat_model_stream":
             continue
@@ -336,11 +346,23 @@ async def chat_non_stream(request: Request):
     """
     data = await request.json()
     message = (data.get("message") or "").strip()
+
+    # Optional tool gating from UI/body (comma-separated). Example: "database"
+    tools = (data.get("tools") or "").strip()
+    selected_tools: list[str] = []
+    if tools:
+        try:
+            selected_tools = [t.strip() for t in str(tools).split(",") if t.strip()]
+        except Exception:
+            selected_tools = []
+
+    log.info(f"[chat_non_stream] tools_param={tools!r} selected_tools={selected_tools}")
+
     if not message:
         return JSONResponse({"error": "Empty message"}, status_code=400)
 
     out = []
-    async for chunk in llm_stream([{"role": "user", "content": message}]):
+    async for chunk in llm_stream([{"role": "user", "content": message}], selected_tools=selected_tools):
         out.append(chunk)
     return {"text": "".join(out)}
 
@@ -658,7 +680,8 @@ async def chat_stream(
 
         try:
             cfg = get_settings()
-            agent = get_agent(cfg)
+            agent = get_agent(cfg, selected_tools=selected_tools)
+            log.info(f"[chat] tools_param={tools!r} selected_tools={selected_tools}")
             inputs = {"messages": context_msgs}
 
             lg_cfg = {
