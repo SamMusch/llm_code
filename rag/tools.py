@@ -30,6 +30,15 @@ def _cached_pg_engine(uri: str, schema: Optional[str]) -> Engine:
     """
     from sqlalchemy import create_engine
 
+    # Normalize common DSN formats.
+    # - SQLAlchemy expects an explicit driver when using psycopg v3.
+    # - Our app may also pass a plain libpq DSN (postgresql:// / postgres://) that works with psycopg.connect().
+    if isinstance(uri, str):
+        if uri.startswith("postgresql://"):
+            uri = uri.replace("postgresql://", "postgresql+psycopg://", 1)
+        elif uri.startswith("postgres://"):
+            uri = uri.replace("postgres://", "postgresql+psycopg://", 1)
+
     # Fast fail + server-side statement timeout.
     # Note: connect_timeout is libpq seconds; statement_timeout is ms.
     opts = "-c statement_timeout=15000"
@@ -57,7 +66,7 @@ def _invalidate_pg_engine_cache() -> None:
 
 
 def _get_postgres_uri(cfg: Settings | None = None) -> str | None:
-    """Return a SQLAlchemy-compatible Postgres URI, if configured."""
+    """Return a Postgres URI (SQLAlchemy or psycopg DSN), if configured."""
     # Prefer explicit env var so local/dev/prod can share the same code.
     uri = os.environ.get("POSTGRES_URI") or os.environ.get("DATABASE_URL")
     if uri:

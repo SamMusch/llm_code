@@ -348,8 +348,15 @@ async def chat_non_stream(request: Request):
     message = (data.get("message") or "").strip()
 
     # Optional tool gating from UI/body (comma-separated). Example: "database"
-    tools = (data.get("tools") or "").strip()
-    selected_tools: list[str] = []
+    tools_raw = data.get("tools")
+
+    if isinstance(tools_raw, list):
+        tools = ",".join(str(t).strip() for t in tools_raw if str(t).strip())
+    elif isinstance(tools_raw, str):
+        tools = tools_raw.strip()
+    else:
+        tools = ""
+        selected_tools: list[str] = []
     if tools:
         try:
             selected_tools = [t.strip() for t in str(tools).split(",") if t.strip()]
