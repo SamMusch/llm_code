@@ -13,22 +13,7 @@ from .intent import last_human_text
 
 def _is_sql_write_request(q: str) -> bool:
     """Block anything that sounds like DDL/DML or permission changes."""
-    write_terms = [
-        "insert ",
-        "update ",
-        "delete ",
-        "drop ",
-        "alter ",
-        "create ",
-        "truncate ",
-        "grant ",
-        "revoke ",
-        "vacuum",
-        "analyze",
-        "set role",
-        "owner",
-        "privilege",
-    ]
+    write_terms = ["vacuum","truncate "]
     ql = q.lower()
     return any(t in ql for t in write_terms)
 

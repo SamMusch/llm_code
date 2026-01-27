@@ -17,11 +17,12 @@ from .config import Settings, get_settings
 from .tools import search_docs, rebuild_index, get_sql_database_tools
 from .observability import setup_observability
 
-from .middleware.intent import Intent, classify_intent, intent_router_hints, last_human_text
-from .middleware.guards import hallucination_guard_hints, sql_write_guard
-from .middleware.context import context_relevance_hint, has_retrieved_sources, trim_history
-from .middleware.autosearch import docs_first_autosearch, force_list_tables, force_list_schemas
-from .middleware.termination import stop_after_final_answer
+from .middleware import *
+#from .middleware.intent import Intent, classify_intent, intent_router_hints, last_human_text
+#from .middleware.guards import hallucination_guard_hints, sql_write_guard
+#from .middleware.context import context_relevance_hint, has_retrieved_sources, trim_history
+#from .middleware.autosearch import docs_first_autosearch, force_list_tables, force_list_schemas
+#from .middleware.termination import stop_after_final_answer
 
 try:
     from retrieval_graph.tools import read_doc_by_name as READ_DOC_TOOL
@@ -149,7 +150,7 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
 
     # Global tool-call limiter + tool-specific caps.
     search_docs_limiter = ToolCallLimitMiddleware(tool_name="search_docs", run_limit=3, exit_behavior="continue")
-    sql_query_limiter = ToolCallLimitMiddleware(tool_name="sql_db_query", run_limit=3, exit_behavior="continue")
+    sql_query_limiter = ToolCallLimitMiddleware(tool_name="sql_db_query", run_limit=8, exit_behavior="continue")
 
     middleware = [
         search_docs_limiter,

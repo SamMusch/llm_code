@@ -29,26 +29,11 @@ def keyword_overlap_score(a: str, b: str) -> float:
         s = re.sub(r"[^a-z0-9_\s]", " ", s)
         raw = [t for t in s.split() if len(t) >= 3]
         stop = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "this",
-            "from",
-            "into",
-            "what",
-            "did",
-            "does",
-            "how",
-            "your",
-            "you",
-            "our",
-            "about",
-            "when",
-            "where",
-            "which",
-            "who",
+            "the","and","for","with",
+            "that","this","from","into",
+            "what","did","does","how",
+            "your","you","our","about",
+            "when","where","which","who",
         }
         return {t for t in raw if t not in stop}
 
