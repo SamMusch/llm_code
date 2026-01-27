@@ -197,11 +197,6 @@ def load_retriever(k: int | None = None):
 
 def verify_faiss_dim_matches_embeddings() -> None:
     """Fail fast if the FAISS index dimension doesn't match the current embedding model.
-
-    This catches the common runtime crash:
-      faiss/class_wrappers.py ... assert d == self.d
-
-    Call this at app startup so you find misconfigurations immediately.
     """
     index_file = cfg.faiss_dir / "index.faiss"
     if not cfg.faiss_dir.exists() or not index_file.exists():

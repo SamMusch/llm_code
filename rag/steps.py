@@ -6,12 +6,49 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+import contextvars
+from typing import Any, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
 from opentelemetry import trace
 
 log = logging.getLogger("rag.steps")
+
+# --- In-memory step sink (per-request) ---
+# Used by app/main.py SSE stream to surface middleware/tool steps in the UI.
+_STEP_SINK: contextvars.ContextVar[Optional[list[dict[str, Any]]]] = contextvars.ContextVar(
+    "STEP_SINK", default=None
+)
+
+def attach_step_sink(sink: list[dict[str, Any]]):
+    """Attach a per-request sink for step events."""
+    return _STEP_SINK.set(sink)
+
+def detach_step_sink(token) -> None:
+    """Detach the per-request sink."""
+    try:
+        _STEP_SINK.reset(token)
+    except Exception:
+        pass
+
+def emit_step(kind: str, name: str, status: str, payload: Any | None = None) -> None:
+    """Append a step event to the active sink (if any).
+
+    kind: 'middleware' | 'tool' | 'model' | ...
+    status: 'start' | 'ok' | 'error' | ...
+    """
+    sink = _STEP_SINK.get()
+    if sink is None:
+        return
+    sink.append(
+        {
+            "ts": int(time.time() * 1000),
+            "kind": kind,
+            "name": name,
+            "status": status,
+            "payload": payload,
+        }
+    )
 
 def _trunc(v: Any, n: int) -> str:
     if v is None:

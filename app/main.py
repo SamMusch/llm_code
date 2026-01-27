@@ -350,13 +350,15 @@ async def chat_non_stream(request: Request):
     # Optional tool gating from UI/body (comma-separated). Example: "database"
     tools_raw = data.get("tools")
 
+    selected_tools: list[str] = []
+
     if isinstance(tools_raw, list):
         tools = ",".join(str(t).strip() for t in tools_raw if str(t).strip())
     elif isinstance(tools_raw, str):
         tools = tools_raw.strip()
     else:
         tools = ""
-        selected_tools: list[str] = []
+
     if tools:
         try:
             selected_tools = [t.strip() for t in str(tools).split(",") if t.strip()]
@@ -492,7 +494,6 @@ class _TaggedBlockStripper:
 @lru_cache(maxsize=1)
 def _ddb_table():
     """Return the DynamoDB table used for chat history.
-
     Cached to avoid re-creating boto3 resources per request.
     """
     region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
@@ -501,9 +502,7 @@ def _ddb_table():
 
 
 def _five_word_title(text: str) -> str:
-    """Derive a short sidebar title from the first user prompt.
-
-    Note: this is not a semantic summary; it's the first 5 words cleaned.
+    """Short sidebar title ---> first 5 words
     """
     if not text:
         return "Untitled"
@@ -632,7 +631,7 @@ async def chat_stream(
     # 2) Load history and build context for the agent
     try:
         past = history.messages
-        context_msgs = lc_messages_to_dicts(past)
+        context_msgs: list[BaseMessage] = list(past)
 
         # If UI provided file_ids, best-effort inject plain text contents into context.
         ids: list[str] = []
@@ -659,22 +658,22 @@ async def chat_stream(
                 parts.append(f"[Attachment: {name}]\n{text}")
 
             if parts:
+                from langchain_core.messages import SystemMessage
+
                 injected = "\n\n".join(parts)
-                context_msgs = (
-                    [{"role": "system", "content": "User attached files (best-effort):\n\n" + injected}]
-                    + context_msgs
-                )
+                context_msgs = [
+                    SystemMessage(content="User attached files (best-effort):\n\n" + injected)
+                ] + context_msgs
     except Exception as e:
         log.exception(f"DDB read FAILED session_id={sid}: {e}")
-        context_msgs = [{"role": "user", "content": msg}]
+        from langchain_core.messages import HumanMessage
+        context_msgs = [HumanMessage(content=msg)]
 
     async def event_gen() -> AsyncIterator[dict]:
         yield {"event": "start", "data": "ok"}
-
         full: list[str] = []
         stripper = _TaggedBlockStripper()
         saw_token = False
-
 
         steps_cb = StepSpanCallbackHandler(
             max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
@@ -689,7 +688,7 @@ async def chat_stream(
             cfg = get_settings()
             agent = get_agent(cfg, selected_tools=selected_tools)
             log.info(f"[chat] tools_param={tools!r} selected_tools={selected_tools}")
-            inputs = {"messages": context_msgs}
+            inputs = {"messages": convert_to_openai_messages(context_msgs)}
 
             lg_cfg = {
                 "callbacks": [steps_cb],

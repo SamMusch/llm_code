@@ -1,9 +1,29 @@
+
+# middleware.py
+# There are 2 message "dialects"
+    # 1. LangChain: BaseMessage objects
+    # 2. Bedrock/Nova: {"role","content"} dicts.
+# Use #1 within LangGraph/LangChain ---> convert to #2 at the edges (UI payloads / logging / external APIs)
+
 from __future__ import annotations
 import os
 import re
 from typing import Any, Dict, List, Literal
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langchain.agents.middleware import AgentState, before_model
+
+try:
+    # Newer langchain-core
+    from langchain_core.messages import ToolCall  # type: ignore
+except Exception:  # pragma: no cover
+    ToolCall = None  # type: ignore
+
+
+def make_tool_call(*, id: str, name: str, args: dict) -> Any:
+    """Return a langchain ToolCall object when available, otherwise a dict fallback."""
+    if ToolCall is not None:
+        return ToolCall(id=id, name=name, args=args)  # type: ignore
+    return {"id": id, "name": name, "args": args}
 
 Intent = Literal["sql", "docs", "mixed", "unknown"]
 def last_human_text(messages: List[BaseMessage]) -> str:
@@ -13,7 +33,6 @@ def last_human_text(messages: List[BaseMessage]) -> str:
             content = getattr(msg, "content", "")
             return content if isinstance(content, str) else str(content)
     return ""
-
 
 @before_model
 def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
@@ -52,10 +71,9 @@ def trim_history(state: AgentState, runtime) -> Dict[str, Any] | None:
 
     if len(kept) < len(messages):
         kept = [
-            {
-                "role": "system",
-                "content": "Note: earlier conversation history was trimmed for context-length limits.",
-            }
+            SystemMessage(
+                content="Note: earlier conversation history was trimmed for context-length limits."
+            )
         ] + kept
     return {"messages": kept}
 
@@ -121,24 +139,20 @@ def context_relevance_hint(state: AgentState, runtime) -> Dict[str, Any] | None:
         return {
             "messages": messages
             + [
-                {
-                    "role": "system",
-                    "content": (
+                SystemMessage(
+                    content=(
                         f"ContextRelevance=LOW (heuristic score={score:.3f}). "
                         "Prefer another search_docs call with a refined query or ask one clarifying question "
                         "before giving a definitive answer."
-                    ),
-                }
+                    )
+                )
             ]
         }
 
     return {
         "messages": messages
         + [
-            {
-                "role": "system",
-                "content": f"ContextRelevance=OK (heuristic score={score:.3f}).",
-            }
+            SystemMessage(content=f"ContextRelevance=OK (heuristic score={score:.3f}).")
         ]
     }
 
@@ -149,9 +163,12 @@ def stop_after_final_answer(state: AgentState, runtime):
         return None
 
     last = messages[-1]
-    if getattr(last, "role", None) == "assistant":
-        # Final answer already produced → stop graph
-        runtime.stop()
+    if isinstance(last, AIMessage):
+        tool_calls = getattr(last, "tool_calls", None) or []
+        content = getattr(last, "content", "")
+        if (not tool_calls) and str(content).strip():
+            # Final answer already produced → stop graph
+            runtime.stop()
     return None
 
 
@@ -234,63 +251,8 @@ def intent_router_hints(state: AgentState, runtime) -> Dict[str, Any] | None:
     guidance = intent_instructions(intent)
 
     return {
-        "messages": messages
-        + [
-            {
-                "role": "system",
-                "content": guidance,
-            }
-        ]
+        "messages": messages + [SystemMessage(content=guidance)]
     }
-
-
-
-def _is_sql_write_request(q: str) -> bool:
-    """Block anything that sounds like DDL/DML or permission changes."""
-    write_terms = ["vacuum","truncate "]
-    ql = q.lower()
-    return any(t in ql for t in write_terms)
-
-
-def _concat_text(messages: List[BaseMessage]) -> str:
-    parts: List[str] = []
-    for m in messages:
-        c = getattr(m, "content", "")
-        parts.append(c if isinstance(c, str) else str(c))
-    return "\n".join(parts)
-
-
-def _has_retrieved_sources(messages: List[BaseMessage]) -> bool:
-    # Our retriever formats sources like: "Source: Data/docs/<name>" and/or "[1] Source: ..."
-    return "source:" in _concat_text(messages).lower()
-
-
-@before_model
-def sql_write_guard(state: AgentState, runtime) -> Dict[str, Any] | None:
-    """Refuse any request that appears to modify the database."""
-    messages = state.get("messages", [])
-    if not messages:
-        return None
-
-    text = last_human_text(messages)
-    if not text:
-        return None
-
-    if _is_sql_write_request(text):
-        return {
-            "messages": messages
-            + [
-                {
-                    "role": "assistant",
-                    "content": (
-                        "I can’t help modify the database (DDL/DML/privileges). "
-                        "If you want, ask for a read-only query/report and I’ll compute it via SQL tools."
-                    ),
-                }
-            ]
-        }
-
-    return None
 
 
 @before_model
@@ -312,32 +274,28 @@ def hallucination_guard_hints(state: AgentState, runtime) -> Dict[str, Any] | No
     if not human_q:
         return None
 
-    if not _has_retrieved_sources(messages):
+    if not has_retrieved_sources(messages):
         return {
             "messages": messages
             + [
-                {
-                    "role": "system",
-                    "content": (
+                SystemMessage(
+                    content=(
                         "HallucinationGuard=ON. Do not answer from memory. "
                         "If this is about docs, call search_docs/read_doc_by_name first. "
                         "If this is about DB facts, call SQL tools first."
-                    ),
-                }
+                    )
+                )
             ]
         }
 
     return {
         "messages": messages
         + [
-            {
-                "role": "system",
-                "content": "HallucinationGuard=ON. Answer only using evidence retrieved via tools; include a Sources: line.",
-            }
+            SystemMessage(
+                content="HallucinationGuard=ON. Answer only using evidence retrieved via tools; include a Sources: line."
+            )
         ]
     }
-
-
 
 
 @before_model
@@ -373,13 +331,12 @@ def force_list_tables(state: AgentState, runtime) -> Dict[str, Any] | None:
         return {
             "messages": messages
             + [
-                {
-                    "role": "assistant",
-                    "content": "Calling sql_db_query to list tables via information_schema.",
-                    "tool_calls": [
-                        {"id": "force_list_tables_0", "name": "sql_db_query", "args": {"query": q}},
+                AIMessage(
+                    content="Calling sql_db_query to list tables via information_schema.",
+                    tool_calls=[
+                        make_tool_call(id="force_list_tables_0", name="sql_db_query", args={"query": q}),
                     ],
-                }
+                )
             ]
         }
 
@@ -416,13 +373,12 @@ def force_list_schemas(state: AgentState, runtime) -> Dict[str, Any] | None:
         return {
             "messages": messages
             + [
-                {
-                    "role": "assistant",
-                    "content": "Calling sql_db_query to list schemas via information_schema.",
-                    "tool_calls": [
-                        {"id": "force_list_schemas_0", "name": "sql_db_query", "args": {"query": q}},
+                AIMessage(
+                    content="Calling sql_db_query to list schemas via information_schema.",
+                    tool_calls=[
+                        make_tool_call(id="force_list_schemas_0", name="sql_db_query", args={"query": q}),
                     ],
-                }
+                )
             ]
         }
 
@@ -474,12 +430,11 @@ def docs_first_autosearch(state: AgentState, runtime) -> Dict[str, Any] | None:
     return {
         "messages": messages
         + [
-            {
-                "role": "assistant",
-                "content": "Calling search_docs now.",
-                "tool_calls": [
-                    {"id": "docs_first_autosearch_0", "name": "search_docs", "args": {"query": human_q}},
+            AIMessage(
+                content="Calling search_docs now.",
+                tool_calls=[
+                    make_tool_call(id="docs_first_autosearch_0", name="search_docs", args={"query": human_q}),
                 ],
-            }
+            )
         ]
     }

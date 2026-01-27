@@ -8,21 +8,18 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from langchain.agents import create_agent as _lc_create_agent
-from langchain.agents.middleware import ModelFallbackMiddleware, ModelRetryMiddleware, ToolRetryMiddleware
-from langchain.agents.middleware import ToolCallLimitMiddleware
-from langchain_core.runnables import RunnableConfig
+from langchain.agents.middleware import (
+    ModelFallbackMiddleware,
+    ModelRetryMiddleware,
+    ToolRetryMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain_core.runnables import RunnableConfig
 
 from .config import Settings, get_settings
 from .tools import search_docs, rebuild_index, get_sql_database_tools
 from .observability import setup_observability
-
 from .middleware import *
-#from .middleware.intent import Intent, classify_intent, intent_router_hints, last_human_text
-#from .middleware.guards import hallucination_guard_hints, sql_write_guard
-#from .middleware.context import context_relevance_hint, has_retrieved_sources, trim_history
-#from .middleware.autosearch import docs_first_autosearch, force_list_tables, force_list_schemas
-#from .middleware.termination import stop_after_final_answer
 
 try:
     from retrieval_graph.tools import read_doc_by_name as READ_DOC_TOOL
@@ -43,6 +40,57 @@ SYSTEM_PROMPT = (
 )
 
 
+def _env_truthy(key: str, default: str) -> bool:
+    return os.getenv(key, default).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _validate_llm_config(provider: str, model_name: str) -> None:
+    # Fail fast with a readable error instead of silently producing start/meta/end only.
+    if not provider:
+        raise ValueError(
+            "cfg.llm_provider is empty. Set LLM_PROVIDER (e.g., 'bedrock') or llm.provider in config/rag.yaml."
+        )
+    if not model_name:
+        raise ValueError(
+            "cfg.llm_model is empty. Set LLM_MODEL (e.g., 'anthropic.claude-3-sonnet-20240229-v1:0') or llm.model in config/rag.yaml."
+        )
+
+
+def _build_llms(provider: str, model_name: str, fallback_model_name: str | None):
+    """Return (llm, fallback_llm) for the configured provider."""
+    if provider == "bedrock":
+        import boto3
+        from langchain_aws import ChatBedrock, ChatBedrockConverse
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+        client = boto3.client("bedrock-runtime", region_name=region)
+
+        try:
+            llm = ChatBedrockConverse(client=client, model_id=model_name)
+        except Exception as e:
+            log.warning(f"[agent] Converse unavailable; using ChatBedrock. err={e}")
+            llm = ChatBedrock(client=client, model_id=model_name)
+
+        fallback_llm = None
+        if fallback_model_name:
+            try:
+                fallback_llm = ChatBedrockConverse(client=client, model_id=fallback_model_name)
+            except Exception:
+                fallback_llm = ChatBedrock(client=client, model_id=fallback_model_name)
+        return llm, fallback_llm
+
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+        llm = ChatOllama(model=model_name, base_url=base_url, temperature=0)
+        fallback_llm = (
+            ChatOllama(model=fallback_model_name, base_url=base_url, temperature=0)
+            if fallback_model_name
+            else None
+        )
+        return llm, fallback_llm
+    raise ValueError(f"Unsupported LLM provider: {provider!r}")
+
+
 # ----
 def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str]] = None):
     cfg = cfg or get_settings()
@@ -55,79 +103,19 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     model_name = cfg.llm_model
 
     # Middleware knobs (env-only for now)
-    enable_model_retry = os.getenv("MIDDLEWARE_MODEL_RETRY", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-    enable_tool_retry = os.getenv("MIDDLEWARE_TOOL_RETRY", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-    enable_model_fallback = os.getenv("MIDDLEWARE_MODEL_FALLBACK", "false").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    enable_model_retry = _env_truthy("MIDDLEWARE_MODEL_RETRY", "true")
+    enable_tool_retry = _env_truthy("MIDDLEWARE_TOOL_RETRY", "true")
+    enable_model_fallback = _env_truthy("MIDDLEWARE_MODEL_FALLBACK", "false")
 
     model_retries = int(os.getenv("MIDDLEWARE_MODEL_RETRY_MAX_RETRIES", "2"))
     tool_retries = int(os.getenv("MIDDLEWARE_TOOL_RETRY_MAX_RETRIES", "2"))
 
     fallback_model_name = os.getenv("LLM_FALLBACK_MODEL", "").strip() or None
 
-    # Fail fast with a readable error instead of silently producing start/meta/end only.
-    if not provider:
-        raise ValueError(
-            "cfg.llm_provider is empty. Set LLM_PROVIDER (e.g., 'bedrock') or llm.provider in config/rag.yaml."
-        )
-    if not model_name:
-        raise ValueError(
-            "cfg.llm_model is empty. Set LLM_MODEL (e.g., 'anthropic.claude-3-sonnet-20240229-v1:0') or llm.model in config/rag.yaml."
-        )
-
+    _validate_llm_config(provider, model_name)
     log.info(f"[agent] llm_provider={provider} llm_model={model_name}")
 
-    if provider == "bedrock":
-        import boto3
-        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
-        bedrock_runtime = boto3.client("bedrock-runtime", region_name=region)
-
-        # Bedrock Converse/ConverseStream rejects unknown payload keys. Do NOT pass streaming=True.
-        # Prefer Converse wrapper when available; fall back to ChatBedrock without streaming kwargs.
-        try:
-            from langchain_aws import ChatBedrockConverse as BedrockChat
-            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
-        except Exception as e:
-            log.warning(
-                f"[agent] ChatBedrockConverse unavailable or failed; falling back to ChatBedrock. err={e}")
-            from langchain_aws import ChatBedrock as BedrockChat
-            llm = BedrockChat(client=bedrock_runtime, model_id=model_name)
-
-        fallback_llm = None
-        if fallback_model_name:
-            try:
-                from langchain_aws import ChatBedrockConverse as BedrockChat
-                fallback_llm = BedrockChat(client=bedrock_runtime, model_id=fallback_model_name)
-            except Exception:
-                from langchain_aws import ChatBedrock as BedrockChat
-                fallback_llm = BedrockChat(client=bedrock_runtime, model_id=fallback_model_name)
-
-    elif provider == "ollama":
-        from langchain_ollama import ChatOllama
-        llm = ChatOllama(
-            model=model_name,
-            base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-            temperature=0,
-        )
-        fallback_llm = None
-        if fallback_model_name:
-            fallback_llm = ChatOllama(
-                model=fallback_model_name,
-                base_url=os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434"),
-                temperature=0,
-            )
-    else:
-        try:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(model=model_name, base_url=os.environ.get("OPENAI_API_BASE"))
-        except Exception:
-            raise ValueError(f"Unsupported LLM provider in config: {provider!r}")
-
-        fallback_llm = None
-        if fallback_model_name:
-            try:
-                fallback_llm = ChatOpenAI(model=fallback_model_name, base_url=os.environ.get("OPENAI_API_BASE"))
-            except Exception:
-                fallback_llm = None
+    llm, fallback_llm = _build_llms(provider, model_name, fallback_model_name)
 
     tools = [search_docs, rebuild_index, READ_DOC_TOOL]
 
@@ -163,7 +151,6 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
         middleware += [
             intent_router_hints,
             hallucination_guard_hints,
-            sql_write_guard,
             force_list_tables,
             force_list_schemas,
         ]
