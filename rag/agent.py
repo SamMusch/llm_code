@@ -416,11 +416,47 @@ def _text_from_stream_payload(payload: Any) -> str:
 
     Return a string (possibly empty). Never raises.
     """
+    def _extract_text_from_parts(parts: Any) -> str:
+        """Extract only human-readable assistant text from provider-specific content parts.
+
+        Bedrock (and some other providers) can represent message content as a list of dict "parts",
+        e.g. {"type":"text","text":"..."} and {"type":"tool_use",...}. We must ignore
+        non-text parts so tool-use metadata does not leak into the UI.
+        """
+        if not isinstance(parts, list):
+            return ""
+        out_chunks: list[str] = []
+        for p in parts:
+            if p is None:
+                continue
+            # Common: {"type": "text", "text": "..."}
+            if isinstance(p, dict):
+                ptype = str(p.get("type") or "").lower()
+                if ptype in {"text", "output_text", "message_text"}:
+                    txt = p.get("text")
+                    if txt is not None:
+                        out_chunks.append(str(txt))
+                # Ignore tool_use / tool_result / metadata parts
+                continue
+            # Some providers may emit raw strings in the parts list
+            if isinstance(p, str):
+                out_chunks.append(p)
+                continue
+            # For any unknown object, do NOT stringify (prevents leaking dict/objects into UI)
+            continue
+        return "".join(out_chunks)
+
     try:
         obj = payload
         if isinstance(obj, (tuple, list)) and obj:
             # Common shape: (message, metadata)
             obj = obj[0]
+
+        # Prefer LangChain's normalized streamed text when available.
+        # Bedrock (Converse) often streams content blocks; `.text` filters to user-visible text.
+        txt_attr = getattr(obj, "text", None)
+        if isinstance(txt_attr, str) and txt_attr:
+            return txt_attr
 
         # Only stream assistant text. Drop tool/system/user messages.
         # LangChain message objects expose a `type` attribute (e.g., "ai", "tool", "human", "system").
@@ -442,7 +478,12 @@ def _text_from_stream_payload(payload: Any) -> str:
             # 1) Direct content
             if "content" in obj:
                 val = obj.get("content", "")
-                return "" if val is None else str(val)
+                # If content is provider "parts", extract only text parts.
+                extracted = _extract_text_from_parts(val)
+                if extracted:
+                    return extracted
+                # Otherwise, only accept plain strings; do not stringify dicts/objects.
+                return "" if val is None else (val if isinstance(val, str) else "")
 
             # 2) Nested model/tools messages
             for key in ("model", "tools"):
@@ -457,9 +498,11 @@ def _text_from_stream_payload(payload: Any) -> str:
                         if mtype is not None and mtype != "ai":
                             return ""
                         val = getattr(last, "content", "")
-                        if isinstance(val, list):
-                            return "".join("" if v is None else str(v) for v in val)
-                        return "" if val is None else str(val)
+                        extracted = _extract_text_from_parts(val)
+                        if extracted:
+                            return extracted
+                        # Otherwise, only accept plain strings; do not stringify dicts/objects.
+                        return "" if val is None else (val if isinstance(val, str) else "")
 
                     # If it's a string repr (common in updates), parse out content='...'
                     if isinstance(last, str):
@@ -478,10 +521,11 @@ def _text_from_stream_payload(payload: Any) -> str:
             return ""
 
         val = getattr(obj, "content", "")
-        if isinstance(val, list):
-            # Some providers represent content as a list of parts
-            return "".join("" if v is None else str(v) for v in val)
-        return "" if val is None else str(val)
+        extracted = _extract_text_from_parts(val)
+        if extracted:
+            return extracted
+        # Otherwise, only accept plain strings; do not stringify dicts/objects.
+        return "" if val is None else (val if isinstance(val, str) else "")
     except Exception:
         return ""
 
@@ -616,23 +660,25 @@ def _validate_llm_config(provider: str, model_name: str) -> None:
 def _build_llms(provider: str, model_name: str, fallback_model_name: str | None):
     """Return (llm, fallback_llm) for the configured provider."""
     if provider == "bedrock":
-        import boto3
         from langchain_aws import ChatBedrock, ChatBedrockConverse
-        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
-        client = boto3.client("bedrock-runtime", region_name=region)
 
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+
+        # Prefer Converse where available. Instantiate without an explicit boto3 client to
+        # match LangChain docs; fall back to ChatBedrock if Converse isn't supported.
         try:
-            llm = ChatBedrockConverse(client=client, model_id=model_name)
+            llm = ChatBedrockConverse(model_id=model_name, region_name=region)
         except Exception as e:
             log.warning(f"[agent] Converse unavailable; using ChatBedrock. err={e}")
-            llm = ChatBedrock(client=client, model_id=model_name)
+            llm = ChatBedrock(model_id=model_name, region_name=region)
 
         fallback_llm = None
         if fallback_model_name:
             try:
-                fallback_llm = ChatBedrockConverse(client=client, model_id=fallback_model_name)
+                fallback_llm = ChatBedrockConverse(model_id=fallback_model_name, region_name=region)
             except Exception:
-                fallback_llm = ChatBedrock(client=client, model_id=fallback_model_name)
+                fallback_llm = ChatBedrock(model_id=fallback_model_name, region_name=region)
+
         return llm, fallback_llm
 
     if provider == "ollama":

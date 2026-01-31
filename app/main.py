@@ -4,7 +4,6 @@ import os
 import sys
 import uuid
 import logging
-import urllib.parse
 import json
 from functools import lru_cache
 from typing import AsyncIterator
@@ -14,7 +13,7 @@ import mimetypes
 import boto3
 
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import FileResponse
@@ -31,18 +30,8 @@ from rag.observability import setup_observability
 from opentelemetry import trace
 from rag.steps import StepSpanCallbackHandler
 
-# Prefer step sink utilities from rag.steps (ContextVar-backed). Fall back to no-ops if unavailable.
-try:
-    from rag.steps import attach_step_sink, detach_step_sink, drain_step_sink  # type: ignore
-except Exception:  # pragma: no cover
-    def attach_step_sink(_sink):  # type: ignore
-        return None
-
-    def detach_step_sink(_token):  # type: ignore
-        return None
-
-    def drain_step_sink():  # type: ignore
-        return []
+# Prefer step sink utilities from rag.steps (ContextVar-backed).
+from rag.steps import attach_step_sink, detach_step_sink, drain_step_sink
 
 # Optional: FastAPI auto-instrumentation (safe no-op if deps not installed)
 try:
@@ -238,76 +227,8 @@ async def app_page(request: Request):
     # full_bleed lets the chat UI take the full viewport (no outer container/topbar spacing).
     return templates.TemplateResponse("app.html", {"request": request, "full_bleed": True})
 
-@app.get("/oauth2/idpresponse")
-async def oauth2_idpresponse(request: Request):
-    """ALB+Cognito redirects here after successful auth.
-
-    We do not need to process the authorization code in the app when ALB is doing
-    authentication. Redirect users to the protected app page.
-    """
-    return RedirectResponse(url="/app", status_code=302)
-
-@app.get("/logout")
-async def logout(request: Request):
-    """Log out of ALB session + Cognito hosted UI.
-
-    ALB uses its own session cookie; clearing it is handled by the ALB listener rule
-    on `/logout*`. We still provide this route so the UI can link to `/logout` and
-    consistently land users back on the site.
-    """
-    # Prefer explicit env vars; fall back to known values used in this deployment.
-    domain = os.getenv("COGNITO_DOMAIN", "us-east-1bxivmfrzy.auth.us-east-1.amazoncognito.com")
-    client_id = os.getenv("COGNITO_CLIENT_ID", os.getenv("ALB_COGNITO_CLIENT_ID", "2fje718ip1ntli3jocuta07191"))
-    post_logout = os.getenv("POST_LOGOUT_REDIRECT", "https://chat.sammusch-ds.com/")
-
-    # Cognito logout endpoint
-    qs = urllib.parse.urlencode({"client_id": client_id, "logout_uri": post_logout})
-    return RedirectResponse(url=f"https://{domain}/logout?{qs}", status_code=302)
 
 
-@app.post("/chat")
-async def chat_non_stream(request: Request):
-    """
-    Optional non-streaming fallback (handy for debugging).
-    Body: {"message": "..."}
-    """
-    data = await request.json()
-    message = (data.get("message") or "").strip()
-
-    # Optional tool gating from UI/body (comma-separated). Example: "database"
-    tools_raw = data.get("tools")
-
-    selected_tools: list[str] = []
-
-    if isinstance(tools_raw, list):
-        tools = ",".join(str(t).strip() for t in tools_raw if str(t).strip())
-    elif isinstance(tools_raw, str):
-        tools = tools_raw.strip()
-    else:
-        tools = ""
-
-    if tools:
-        try:
-            selected_tools = [t.strip() for t in str(tools).split(",") if t.strip()]
-        except Exception:
-            selected_tools = []
-
-    log.info(f"[chat_non_stream] tools_param={tools!r} selected_tools={selected_tools}")
-
-    if not message:
-        return JSONResponse({"error": "Empty message"}, status_code=400)
-
-    out = []
-    from langchain_core.messages import HumanMessage
-    async for ev in rag_llm_stream(messages=[HumanMessage(content=message)], selected_tools=selected_tools):
-        if ev.get("type") == "token":
-            out.append(ev.get("text",""))
-    return {"text": "".join(out)}
-
-# Alias non-streaming chat under /api to match UI calls (/api/chat)
-@app.post("/api/chat")
-async def api_chat_non_stream(request: Request):
-    return await chat_non_stream(request)
 
 
 
@@ -517,18 +438,15 @@ async def chat_stream(
         yield {"event": "start", "data": "ok"}
         full: list[str] = []
 
-        steps_cb = StepSpanCallbackHandler(
-            max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
-            emit_logs=os.getenv("STEPS_EMIT_LOGS", "true").strip().lower() in {"1", "true", "t", "yes", "y", "on"},
-        )
-
         trace_id = _trace_id_hex()
         meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools, "filters": doc_filters})
         yield {"event": "meta", "data": meta}
 
-        # Attach an in-memory per-request sink for middleware/tool steps.
-        step_sink: list[dict] = []
-        sink_token = attach_step_sink(step_sink)
+        # Attach a per-request sink for middleware/tool steps.
+        sink_token = attach_step_sink([])
+        async def _drain_steps() -> AsyncIterator[dict]:
+            for step in drain_step_sink():
+                yield {"event": "step", "data": json.dumps(step, default=str)}
 
         try:
             recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
@@ -538,7 +456,6 @@ async def chat_stream(
                 selected_tools=selected_tools,
                 doc_filters=doc_filters,
                 recursion_limit=recursion_limit,
-                callbacks=[steps_cb],
                 thread_id=sid,
             ):
                 if ev.get("type") == "token":
@@ -548,15 +465,15 @@ async def chat_stream(
                     full.append(text)
                     safe = text.replace("\r", "\\r").replace("\n", "\\n")
                     yield {"event": "token", "data": safe}
-                    for step in drain_step_sink():
-                        yield {"event": "step", "data": json.dumps(step, default=str)}
+                    async for s_ev in _drain_steps():
+                        yield s_ev
                     continue
 
                 if ev.get("type") == "step":
                     payload = ev.get("data")
                     yield {"event": "step", "data": json.dumps(payload, default=str)}
-                    for step in drain_step_sink():
-                        yield {"event": "step", "data": json.dumps(step, default=str)}
+                    async for s_ev in _drain_steps():
+                        yield s_ev
                     continue
 
         finally:
@@ -567,9 +484,11 @@ async def chat_stream(
                 except Exception as e:
                     log.exception(f"DDB assistant write FAILED session_id={sid}: {e}")
 
-            for step in drain_step_sink():
-                yield {"event": "step", "data": json.dumps(step, default=str)}
-            detach_step_sink(sink_token)
+            try:
+                async for s_ev in _drain_steps():
+                    yield s_ev
+            finally:
+                detach_step_sink(sink_token)
 
         yield {"event": "end", "data": "ok"}
 
