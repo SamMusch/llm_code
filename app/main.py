@@ -23,15 +23,26 @@ from sse_starlette.sse import EventSourceResponse
 from langchain_core.messages import BaseMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 
-from rag.agent import get_agent
-from rag.config import get_settings
+from rag.agent import llm_stream as rag_llm_stream
 from rag.retriever import verify_faiss_dim_matches_embeddings
-from rag.utils import extract_text_from_stream_delta
 from rag.history import DynamoDBChatMessageHistory
 
 from rag.observability import setup_observability
 from opentelemetry import trace
 from rag.steps import StepSpanCallbackHandler
+
+# Prefer step sink utilities from rag.steps (ContextVar-backed). Fall back to no-ops if unavailable.
+try:
+    from rag.steps import attach_step_sink, detach_step_sink, drain_step_sink  # type: ignore
+except Exception:  # pragma: no cover
+    def attach_step_sink(_sink):  # type: ignore
+        return None
+
+    def detach_step_sink(_token):  # type: ignore
+        return None
+
+    def drain_step_sink():  # type: ignore
+        return []
 
 # Optional: FastAPI auto-instrumentation (safe no-op if deps not installed)
 try:
@@ -189,40 +200,6 @@ async def api_upload_files(session_id: str, files: list[UploadFile] = File(...))
 
 
 
-async def llm_stream(
-    messages: list[dict],
-    *,
-    callbacks: list | None = None,
-    selected_tools: list[str] | None = None,
-) -> AsyncIterator[str]:
-    """Yield text chunks from the real LangChain/LangGraph agent."""
-    cfg = get_settings()
-    agent = get_agent(cfg, selected_tools=(selected_tools or []))
-
-    # IMPORTANT: This must match what rag/agent.py expects
-    inputs = {"messages": messages}
-
-    config = {
-        "callbacks": callbacks or [],
-        "configurable": {
-            "selected_tools": selected_tools or [],
-        },
-    }
-    async for event in agent.astream_events(inputs, version="v2", config=config):
-        if event.get("event") != "on_chat_model_stream":
-            continue
-
-        chunk = (event.get("data") or {}).get("chunk")
-        if chunk is None:
-            continue
-
-        delta = getattr(chunk, "content", None)
-        text = extract_text_from_stream_delta(delta)
-        if not text:
-            continue
-
-        yield text
-
 
 # Helper to get current OTEL trace id (hex)
 
@@ -250,56 +227,6 @@ def _short_json(v: object, limit: int = 800) -> str:
         return s[:limit] + "...(truncated)"
     return s
 
-
-def _text_from_any(v: object) -> str:
-    """Best-effort extraction of text from various LangChain/Bedrock shapes.
-
-    Bedrock Converse often returns content blocks like:
-      [{"type": "text", "text": "..."}]
-    """
-    if v is None:
-        return ""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, list):
-        parts: list[str] = []
-        for it in v:
-            if it is None:
-                continue
-            if isinstance(it, str):
-                parts.append(it)
-                continue
-
-            # Bedrock Converse / Nova commonly returns content blocks (dicts).
-            # Only emit actual text; never stringify dicts.
-            if isinstance(it, dict):
-                t = it.get("text")
-                if t:
-                    parts.append(str(t))
-                    continue
-                nested = it.get("content")
-                if nested:
-                    parts.append(_text_from_any(nested))
-                    continue
-                # No usable text in this block
-                continue
-
-            # Fallback for non-dict objects
-            try:
-                parts.append(str(it))
-            except Exception:
-                pass
-
-        return "".join(parts)
-    if isinstance(v, dict):
-        for k in ("text", "content", "output_text", "completion"):
-            if v.get(k):
-                return _text_from_any(v.get(k))
-        return ""
-    try:
-        return extract_text_from_stream_delta(v) or ""
-    except Exception:
-        return ""
 
 @app.get("/", response_class=HTMLResponse)
 async def landing(request: Request):
@@ -371,8 +298,10 @@ async def chat_non_stream(request: Request):
         return JSONResponse({"error": "Empty message"}, status_code=400)
 
     out = []
-    async for chunk in llm_stream([{"role": "user", "content": message}], selected_tools=selected_tools):
-        out.append(chunk)
+    from langchain_core.messages import HumanMessage
+    async for ev in rag_llm_stream(messages=[HumanMessage(content=message)], selected_tools=selected_tools):
+        if ev.get("type") == "token":
+            out.append(ev.get("text",""))
     return {"text": "".join(out)}
 
 # Alias non-streaming chat under /api to match UI calls (/api/chat)
@@ -399,94 +328,6 @@ def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
                 out.append({"role": "user", "content": str(getattr(m, "content", ""))})
             except Exception:
                 out.append({"role": "user", "content": ""})
-        return out
-
-
-
-
-class _TaggedBlockStripper:
-    """Stateful stripper for <thinking>/<analysis> blocks across streamed chunks."""
-
-    _PAIRS = [
-        ("<thinking>", "</thinking>"),
-        ("<analysis>", "</analysis>"),
-    ]
-
-    def __init__(self) -> None:
-        self._in_block = False
-        self._carry = ""
-        self._max_tag = max(max(len(a), len(b)) for a, b in self._PAIRS)
-        self._carry_len = max(16, self._max_tag)  # extra safety for partial tags
-
-    def feed(self, text: str) -> str:
-        if not text:
-            return ""
-
-        s = (self._carry or "") + text
-        s_low = s.lower()
-
-        out_parts: list[str] = []
-        i = 0
-
-        while i < len(s):
-            if not self._in_block:
-                # Find earliest opening tag among pairs
-                next_pos = None
-                next_open = None
-                next_close = None
-                for open_tag, close_tag in self._PAIRS:
-                    p = s_low.find(open_tag, i)
-                    if p != -1 and (next_pos is None or p < next_pos):
-                        next_pos = p
-                        next_open = open_tag
-                        next_close = close_tag
-
-                if next_pos is None:
-                    break
-
-                # Emit everything before the tag
-                out_parts.append(s[i:next_pos])
-                i = next_pos + len(next_open)
-                self._in_block = True
-            else:
-                # Skip until we find the corresponding close tag
-                found_close = False
-                for open_tag, close_tag in self._PAIRS:
-                    p = s_low.find(close_tag, i)
-                    if p != -1:
-                        i = p + len(close_tag)
-                        self._in_block = False
-                        found_close = True
-                        break
-
-                if not found_close:
-                    # Need more data to complete the closing tag
-                    break
-
-        # Remainder handling with carry to catch partial tags across boundaries
-        remainder = s[i:]
-
-        if self._in_block:
-            # Discard content inside the block; keep only a tail for partial close-tag matching
-            self._carry = remainder[-self._carry_len :]
-            return "".join(out_parts)
-
-        # Not in a block: keep a tail as carry to detect partial open tags
-        if len(remainder) <= self._carry_len:
-            self._carry = remainder
-            return "".join(out_parts)
-
-        self._carry = remainder[-self._carry_len :]
-        out_parts.append(remainder[: -self._carry_len])
-        return "".join(out_parts)
-
-    def flush(self) -> str:
-        """Flush any safe remaining text (only when not inside a block)."""
-        if self._in_block:
-            self._carry = ""
-            return ""
-        out = self._carry
-        self._carry = ""
         return out
 
 
@@ -603,6 +444,7 @@ async def chat_stream(
     session_id: str | None = None,
     file_ids: str | None = None,
     tools: str | None = None,
+    filters: str | None = None,
 ):
     msg = (message or "").strip()
     if not msg:
@@ -621,6 +463,16 @@ async def chat_stream(
         except Exception:
             selected_tools = []
 
+    # Optional metadata filters from UI (URL-encoded JSON string)
+    doc_filters: dict = {}
+    if filters:
+        try:
+            doc_filters = json.loads(str(filters)) or {}
+            if not isinstance(doc_filters, dict):
+                doc_filters = {}
+        except Exception:
+            doc_filters = {}
+
     # 1) Save user message
     try:
         history.add_user_message(msg)
@@ -628,52 +480,42 @@ async def chat_stream(
     except Exception as e:
         log.exception(f"DDB write FAILED session_id={sid}: {e}")
 
-    # 2) Load history and build context for the agent
-    try:
-        past = history.messages
-        context_msgs: list[BaseMessage] = list(past)
+    # 2) Build the *current turn* messages for the agent.
+    # With a LangGraph checkpointer, prior turns are loaded from thread_id=session_id.
+    from langchain_core.messages import HumanMessage, SystemMessage
 
-        # If UI provided file_ids, best-effort inject plain text contents into context.
-        ids: list[str] = []
-        if file_ids:
-            ids = [x.strip() for x in str(file_ids).split(",") if x.strip()]
+    context_msgs: list[BaseMessage] = [HumanMessage(content=msg)]
 
-        if ids:
-            dest_dir = _session_upload_dir(sid)
-            parts: list[str] = []
-            for fid in ids:
-                # Files are stored as {fid}__{name}
-                matches = list(dest_dir.glob(f"{fid}__*"))
-                if not matches:
-                    continue
+    # If UI provided file_ids, best-effort inject plain text contents into this turn.
+    ids: list[str] = []
+    if file_ids:
+        ids = [x.strip() for x in str(file_ids).split(",") if x.strip()]
 
-                p = matches[0]
-                name = p.name.split("__", 1)[-1]
-                text = _read_text_best_effort(p, MAX_FILE_TEXT_CHARS)
-                if not text:
-                    # Don't pretend we parsed unsupported formats
-                    parts.append(f"[Attachment: {name}] (not parsed; unsupported file type)")
-                    continue
+    if ids:
+        dest_dir = _session_upload_dir(sid)
+        parts: list[str] = []
+        for fid in ids:
+            # Files are stored as {fid}__{name}
+            matches = list(dest_dir.glob(f"{fid}__*"))
+            if not matches:
+                continue
 
-                parts.append(f"[Attachment: {name}]\n{text}")
+            p = matches[0]
+            name = p.name.split("__", 1)[-1]
+            text = _read_text_best_effort(p, MAX_FILE_TEXT_CHARS)
+            if not text:
+                parts.append(f"[Attachment: {name}] (not parsed; unsupported file type)")
+                continue
 
-            if parts:
-                from langchain_core.messages import SystemMessage
+            parts.append(f"[Attachment: {name}]\n{text}")
 
-                injected = "\n\n".join(parts)
-                context_msgs = [
-                    SystemMessage(content="User attached files (best-effort):\n\n" + injected)
-                ] + context_msgs
-    except Exception as e:
-        log.exception(f"DDB read FAILED session_id={sid}: {e}")
-        from langchain_core.messages import HumanMessage
-        context_msgs = [HumanMessage(content=msg)]
+        if parts:
+            injected = "\n\n".join(parts)
+            context_msgs = [SystemMessage(content="User attached files (best-effort):\n\n" + injected)] + context_msgs
 
     async def event_gen() -> AsyncIterator[dict]:
         yield {"event": "start", "data": "ok"}
         full: list[str] = []
-        stripper = _TaggedBlockStripper()
-        saw_token = False
 
         steps_cb = StepSpanCallbackHandler(
             max_chars=int(os.getenv("STEPS_MAX_CHARS", "2000")),
@@ -681,176 +523,53 @@ async def chat_stream(
         )
 
         trace_id = _trace_id_hex()
-        meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools})
+        meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools, "filters": doc_filters})
         yield {"event": "meta", "data": meta}
 
+        # Attach an in-memory per-request sink for middleware/tool steps.
+        step_sink: list[dict] = []
+        sink_token = attach_step_sink(step_sink)
+
         try:
-            cfg = get_settings()
-            agent = get_agent(cfg, selected_tools=selected_tools)
-            log.info(f"[chat] tools_param={tools!r} selected_tools={selected_tools}")
-            inputs = {"messages": convert_to_openai_messages(context_msgs)}
+            recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
 
-            lg_cfg = {
-                "callbacks": [steps_cb],
-                "recursion_limit": int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50")),
-                # Passed through to LangGraph nodes/tools that read configurable settings.
-                "configurable": {
-                    "selected_tools": selected_tools,
-                },
-            }
-
-            try:
-                async for event in agent.astream_events(inputs, version="v2", config=lg_cfg):
-                    kind = event.get("event")
-
-                    # 1) Tokens
-                    if kind == "on_chat_model_stream":
-                        chunk = (event.get("data") or {}).get("chunk")
-                        if chunk is None:
-                            continue
-                        delta = getattr(chunk, "content", None)
-                        if isinstance(delta, (list, dict)):
-                            log.warning(f"[chat_stream] stream delta type={type(delta)} sample={_short_json(delta)}")
-                        text = _text_from_any(delta)
-                        if not text:
-                            continue
-
-                        cleaned = stripper.feed(text)
-                        if not cleaned:
-                            continue
-                        full.append(cleaned)
-
-                        safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
-                        saw_token = True
-                        yield {"event": "token", "data": safe}
+            async for ev in rag_llm_stream(
+                messages=context_msgs,
+                selected_tools=selected_tools,
+                doc_filters=doc_filters,
+                recursion_limit=recursion_limit,
+                callbacks=[steps_cb],
+                thread_id=sid,
+            ):
+                if ev.get("type") == "token":
+                    text = str(ev.get("text", ""))
+                    if not text:
                         continue
-
-                    # 2) Tool steps (LangSmith-like)
-                    if kind in {"on_tool_start", "on_tool_end", "on_tool_error"}:
-                        data = event.get("data") or {}
-                        serialized = data.get("serialized") or {}
-
-                        # LangGraph/LangChain put tool names in different places depending on wrapper.
-                        name = (
-                            event.get("name")
-                            or data.get("name")
-                            or serialized.get("name")
-                            or serialized.get("id")
-                            or ""
-                        )
-                        run_id = str(event.get("run_id") or data.get("run_id") or "")
-
-                        def _as_str(v: object) -> str:
-                            if v is None:
-                                return ""
-                            if isinstance(v, str):
-                                return v
-                            try:
-                                return json.dumps(v, default=str)
-                            except Exception:
-                                return str(v)
-
-                        max_chars = int(os.getenv("STEPS_MAX_CHARS", "2000"))
-
-                        if kind == "on_tool_start":
-                            step = {
-                                "step_type": "tool",
-                                "name": str(name),
-                                "status": "start",
-                                "run_id": run_id,
-                                "input": _as_str(data.get("input") or data.get("inputs") or ""),
-                            }
-                        elif kind == "on_tool_end":
-                            step = {
-                                "step_type": "tool",
-                                "name": str(name),
-                                "status": "ok",
-                                "run_id": run_id,
-                                "output": _as_str(data.get("output") or ""),
-                            }
-                        else:
-                            step = {
-                                "step_type": "tool",
-                                "name": str(name),
-                                "status": "error",
-                                "run_id": run_id,
-                                "error": _as_str(data.get("error") or ""),
-                            }
-
-                        # Cap payload sizes to keep SSE stable.
-                        for k in ("input", "output", "error"):
-                            if k in step and isinstance(step[k], str) and len(step[k]) > max_chars:
-                                step[k] = step[k][:max_chars] + "...(truncated)"
-
+                    full.append(text)
+                    safe = text.replace("\r", "\\r").replace("\n", "\\n")
+                    yield {"event": "token", "data": safe}
+                    for step in drain_step_sink():
                         yield {"event": "step", "data": json.dumps(step, default=str)}
-                        continue
+                    continue
 
-                    # 3) Non-streaming models: emit final text on end
-                    if kind in {"on_chat_model_end", "on_llm_end"} and (not saw_token):
-                        data = event.get("data") or {}
-                        out = data.get("output")
-                        log.warning(f"[chat_stream] end output type={type(out)} sample={_short_json(out)}")
+                if ev.get("type") == "step":
+                    payload = ev.get("data")
+                    yield {"event": "step", "data": json.dumps(payload, default=str)}
+                    for step in drain_step_sink():
+                        yield {"event": "step", "data": json.dumps(step, default=str)}
+                    continue
 
-                        text = ""
-
-                        # ChatResult-like
-                        if hasattr(out, "generations"):
-                            gens = getattr(out, "generations") or []
-                            if gens:
-                                g0 = gens[0]
-                                msg = getattr(g0, "message", None)
-                                if msg is not None and hasattr(msg, "content"):
-                                    text = _text_from_any(getattr(msg, "content", None))
-                                else:
-                                    t = getattr(g0, "text", None)
-                                    if t:
-                                        text = str(t)
-
-                        # Dict-like (Bedrock/Converse shapes)
-                        elif isinstance(out, dict):
-                            try:
-                                content = out.get("output", {}).get("message", {}).get("content")
-                                if content:
-                                    text = _text_from_any(content)
-                            except Exception:
-                                pass
-                            if not text:
-                                for k in ("text", "content", "output_text", "completion"):
-                                    if out.get(k):
-                                        text = str(out[k])
-                                        break
-
-                        # Message-like
-                        elif out is not None and hasattr(out, "content"):
-                            text = _text_from_any(getattr(out, "content", None))
-
-                        if text:
-                            cleaned = stripper.feed(text)
-                            if cleaned:
-                                full.append(cleaned)
-                                saw_token = True
-                                safe = cleaned.replace("\r", "\\r").replace("\n", "\\n")
-                                yield {"event": "token", "data": safe}
-                        continue
-
-            except Exception as e:
-                # Surface a readable error to the client; the outer finally will still persist what we have.
-                msg = str(e)
-                yield {"event": "error", "data": msg}
         finally:
-            # Flush any remaining safe text (only when not inside a tagged block)
-            tail = stripper.flush()
-            if tail:
-                full.append(tail)
-                safe_tail = tail.replace("\r", "\\r").replace("\n", "\\n")
-                yield {"event": "token", "data": safe_tail}
-
             if full:
                 try:
                     history.add_ai_message("".join(full), trace_id=trace_id)
                     log.info(f"DDB assistant write OK session_id={sid}")
                 except Exception as e:
                     log.exception(f"DDB assistant write FAILED session_id={sid}: {e}")
+
+            for step in drain_step_sink():
+                yield {"event": "step", "data": json.dumps(step, default=str)}
+            detach_step_sink(sink_token)
 
         yield {"event": "end", "data": "ok"}
 
@@ -871,8 +590,9 @@ async def api_chat_stream(
     session_id: str | None = None,
     file_ids: str | None = None,
     tools: str | None = None,
+    filters: str | None = None,
 ):
-    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids, tools=tools)
+    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids, tools=tools, filters=filters)
 
 
 @app.get("/api/files/{file_id}")

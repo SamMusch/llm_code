@@ -1,0 +1,17 @@
+{
+	"ulid": "01KGAR1Y51468D2B0SRHVJ41Z2",
+	"minTime": 1769875200000,
+	"maxTime": 1769882400000,
+	"stats": {
+		"numSamples": 66804,
+		"numSeries": 475,
+		"numChunks": 481
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KGAR1Y51468D2B0SRHVJ41Z2"
+		]
+	},
+	"version": 1
+}

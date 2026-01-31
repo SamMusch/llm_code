@@ -24,6 +24,60 @@ from langchain_community.document_loaders.excel import UnstructuredExcelLoader
 from langchain_community.document_loaders.email import (UnstructuredEmailLoader,OutlookMessageLoader,)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from typing import Any
+import re
+from datetime import datetime
+try:
+    import yaml
+except Exception:
+    yaml = None
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Parse YAML frontmatter if present. Return (metadata, body_text)."""
+    if not text.startswith("---"):
+        return {}, text
+    m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.S)
+    if not m:
+        return {}, text
+    raw, body = m.group(1), m.group(2)
+    if yaml is None:
+        return {}, body
+    try:
+        meta = yaml.safe_load(raw) or {}
+        return meta, body
+    except Exception:
+        return {}, body
+
+
+def _normalize_metadata(meta: dict[str, Any], body: str) -> dict[str, Any]:
+    """Keep only the allowed metadata fields and normalize types."""
+    out: dict[str, Any] = {}
+
+    if isinstance(meta.get("title"), str):
+        out["title"] = meta["title"]
+
+    for k in ["kMDItemContentCreationDate", "kMDItemContentModificationDate"]:
+        v = meta.get(k)
+        if isinstance(v, str):
+            try:
+                out[k] = int(datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp())
+            except Exception:
+                pass
+
+    # word_count: compute from body
+    out["word_count"] = len(body.split())
+
+    # tags: normalize to list[str]
+    tags = meta.get("tags")
+    if isinstance(tags, list):
+        out["tags"] = [str(t) for t in tags]
+    elif isinstance(tags, str):
+        out["tags"] = [tags]
+
+    return out
+
+
 # Simple loader registry by extension
 
 EXT_TO_LOADER = {
@@ -103,6 +157,15 @@ def _load_documents(input_dir: Path) -> list:
             error_count += 1
             continue
 
+    # Parse frontmatter + attach normalized per-document metadata
+    for d in docs:
+        text = getattr(d, "page_content", "") or ""
+        meta_raw, body = _parse_frontmatter(text)
+        norm = _normalize_metadata(meta_raw, body)
+        if norm:
+            d.metadata = {**(d.metadata or {}), **norm}
+        d.page_content = body
+
     print(
         f"[loader-summary] Loaded: {loaded_count}, Dropped empty: {dropped_count}, Errors: {error_count}"
     )
@@ -146,12 +209,14 @@ def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> No
     vs.save_local(str(cfg.faiss_dir))
 
 
-def load_retriever(k: int | None = None):
+def load_retriever(k: int | None = None, filters: dict | None = None, fetch_k: int | None = None):
     """
     Reload saved FAISS index → attach embedding model → return retriever interface
     for semantic lookup.
+    `filters` is a deterministic metadata filter applied at retrieval time.
     """
     k = k or cfg.k  # top k docs
+    fetch_k = fetch_k or max(k * 10, 50)
 
     index_file = cfg.faiss_dir / "index.faiss"
 
@@ -192,7 +257,14 @@ def load_retriever(k: int | None = None):
 
     print(f"[retriever] Loaded index from {cfg.faiss_dir} (k={k})")
 
-    return vs.as_retriever(search_kwargs={"k": k})
+    search_kwargs: dict[str, Any] = {"k": k}
+    # FAISS metadata filtering is applied after an initial fetch; fetch_k controls how many candidates are fetched
+    # before filtering to k.
+    if filters:
+        search_kwargs["filter"] = filters
+        search_kwargs["fetch_k"] = fetch_k
+
+    return vs.as_retriever(search_kwargs=search_kwargs)
 
 
 def verify_faiss_dim_matches_embeddings() -> None:
@@ -230,4 +302,3 @@ def verify_faiss_dim_matches_embeddings() -> None:
         )
 
     print(f"[startup] FAISS dim OK (d={faiss_dim})", flush=True)
-

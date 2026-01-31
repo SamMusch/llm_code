@@ -35,6 +35,16 @@ const toolPlaceholder1El = el("toolPlaceholder1");
 const placeholderAEl = el("placeholderA");
 const placeholderBEl = el("placeholderB");
 
+// Metadata filters
+const metaTitleEl = el("metaTitle");
+const metaTagsEl = el("metaTags");
+const metaWordMinEl = el("metaWordMin");
+const metaWordMaxEl = el("metaWordMax");
+const metaCreatedFromEl = el("metaCreatedFrom");
+const metaCreatedToEl = el("metaCreatedTo");
+const metaModifiedFromEl = el("metaModifiedFrom");
+const metaModifiedToEl = el("metaModifiedTo");
+
 // Projects
 const newProjectBtn = el("newProjectBtn");
 const projectListEl = el("projectList");
@@ -490,16 +500,50 @@ function renderSteps(steps) {
   });
 }
 
+function _csvToList(s) {
+  return (s || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+// Build metadata filters payload. This is sent to the backend as URL-encoded JSON.
+// NOTE: Only exact-match keys are currently wired end-to-end on the backend.
+function buildMetadataFilters() {
+  const filters = {};
+
+  const title = (metaTitleEl?.value || "").trim();
+  if (title) filters.title = title;
+
+  const tags = _csvToList(metaTagsEl?.value || "");
+  if (tags.length) filters.tags = tags;
+
+  // Keep these values available for future backend range support, but do not send them yet
+  // to avoid breaking FAISS exact-match filtering.
+  // const wMin = (metaWordMinEl?.value || "").trim();
+  // const wMax = (metaWordMaxEl?.value || "").trim();
+  // const cFrom = (metaCreatedFromEl?.value || "").trim();
+  // const cTo = (metaCreatedToEl?.value || "").trim();
+  // const mFrom = (metaModifiedFromEl?.value || "").trim();
+  // const mTo = (metaModifiedToEl?.value || "").trim();
+
+  return filters;
+}
+
 function streamAnswer(userText, fileIds = []) {
   const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
   const fileParam = ids.length ? `&file_ids=${encodeURIComponent(ids.join(","))}` : "";
 
   const tools = getSelectedTools();
   const toolsParam = tools.length ? `&tools=${encodeURIComponent(tools.join(","))}` : "";
+  const metaFilters = buildMetadataFilters();
+  const filtersParam = Object.keys(metaFilters).length
+    ? `&filters=${encodeURIComponent(JSON.stringify(metaFilters))}`
+    : "";
 
   const url = `/chat/stream?message=${encodeURIComponent(
     userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}`;
+  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}`;
   const es = new EventSource(url);
 
   let acc = "";
