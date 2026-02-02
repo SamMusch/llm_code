@@ -23,12 +23,22 @@ class DynamoDBChatMessageHistory(BaseChatMessageHistory):
         session_id: str,
         table_name: str | None = None,
         region: str | None = None,
+        env: str | None = None,
         user_id: str = "",
         limit: int = 20,
     ):
         self.session_id = session_id
-        self.user_id = user_id
+        self.user_id = user_id or os.getenv("USER_ID", "")
         self.limit = limit
+
+        # Environment namespace to prevent local (ollama) and aws (bedrock) sessions from colliding.
+        # Prefer explicit env arg; otherwise use APP_ENV; default to "local".
+        self.env = (env or os.getenv("APP_ENV") or "local").strip().lower()
+
+        # Composite partition key (table PK is still `session_id`).
+        # This makes the effective key: (env, user_id, session_id)
+        # without requiring a table schema change.
+        self.session_id_key = f"{self.env}#{self.user_id}#{self.session_id}"
 
         self.region = (
             region
@@ -52,7 +62,7 @@ class DynamoDBChatMessageHistory(BaseChatMessageHistory):
         Load the last N messages for this session, ordered oldest → newest.
         """
         resp = self._table.query(
-            KeyConditionExpression=Key("session_id").eq(self.session_id),
+            KeyConditionExpression=Key("session_id").eq(self.session_id_key),
             ScanIndexForward=False,  # newest first
             Limit=self.limit,
         )
@@ -113,10 +123,13 @@ class DynamoDBChatMessageHistory(BaseChatMessageHistory):
 
     def _put_item(self, role: str, text: str, extra: dict | None = None) -> None:
         item = {
-            "session_id": self.session_id,
+            # Table PK
+            "session_id": self.session_id_key,
             "ts": int(time.time() * 1000),
             "role": role,
             "user_id": self.user_id,
+            "env": self.env,
+            "session_id_raw": self.session_id,
             "message": text,
         }
         if extra:

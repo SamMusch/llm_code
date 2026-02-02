@@ -536,6 +536,7 @@ async def llm_stream(
     *,
     messages: Sequence[BaseMessage | dict[str, Any]],
     cfg: Settings | None = None,
+    model: str | None = None,
     selected_tools: Sequence[str] | None = None,
     doc_filters: dict[str, Any] | None = None,
     recursion_limit: int | None = None,
@@ -549,7 +550,7 @@ async def llm_stream(
       2) forward yielded events as SSE
 
     """
-    agent = get_agent(cfg, selected_tools=selected_tools)
+    agent = get_agent(cfg, selected_tools=selected_tools, model_override=model)
 
     runnable_cfg: RunnableConfig = {
         "configurable": {
@@ -619,11 +620,13 @@ async def llm_stream(
 
 # Wrapper tool to inject doc_filters from config into search_docs
 @tool("search_docs")
-def search_docs(query: str, k: int | None = None, config: RunnableConfig | None = None) -> str:
+def search_docs(query: str, k: int | None = None, config: RunnableConfig = None) -> str:
     """Semantic search over docs, with optional deterministic metadata filtering from config.
 
     If UI supplies doc_filters, they are applied at retrieval time (the model does not need to pass them).
     """
+    if config is None:
+        config = {}
     cfg = (config or {}).get("configurable", {}) if isinstance((config or {}), dict) else {}
     doc_filters = cfg.get("doc_filters") or None
     try:
@@ -695,7 +698,11 @@ def _build_llms(provider: str, model_name: str, fallback_model_name: str | None)
 
 
 # ----
-def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str]] = None):
+def get_agent(
+    cfg: Settings | None = None,
+    selected_tools: Optional[Sequence[str]] = None,
+    model_override: str | None = None,
+):
     cfg = cfg or get_settings()
 
     # Bootstrap OpenTelemetry as early as possible so it applies to CLI, API, and langgraph.
@@ -703,7 +710,7 @@ def get_agent(cfg: Settings | None = None, selected_tools: Optional[Sequence[str
     setup_observability(service_name="llm_code")
 
     provider = cfg.llm_provider
-    model_name = cfg.llm_model
+    model_name = (model_override or "").strip() or cfg.llm_model
 
     # Middleware knobs (env-only for now)
     enable_model_retry = _env_truthy("MIDDLEWARE_MODEL_RETRY", "true")
@@ -809,6 +816,11 @@ def create_agent(config: RunnableConfig):
     cfg = get_settings()
     configurable = (config or {}).get("configurable", {})
     selected_tools = configurable.get("selected_tools") or []
-    return get_agent(cfg, selected_tools=selected_tools)
+    model_override = configurable.get("model") or configurable.get("llm_model")
+    if isinstance(model_override, str):
+        model_override = model_override.strip() or None
+    else:
+        model_override = None
+    return get_agent(cfg, selected_tools=selected_tools, model_override=model_override)
 
 

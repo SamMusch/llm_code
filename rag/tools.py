@@ -16,6 +16,7 @@ from .retriever import load_retriever, build_index
 
 from functools import lru_cache
 from typing import Any, Optional
+from langchain_core.runnables import RunnableConfig
 
 
 
@@ -352,7 +353,12 @@ def read_doc_by_name(
 
 
 @tool
-def search_docs(query: str, k: int | None = None, filters: dict | None = None) -> str:
+def search_docs(
+    query: str,
+    config: RunnableConfig,
+    k: int | None = None,
+    filters: dict | None = None,
+) -> str:
     """Semantic search over the FAISS index; returns top-k doc content.
 
     This tool never raises: on failure it returns an ERROR[...] string.
@@ -368,6 +374,15 @@ def search_docs(query: str, k: int | None = None, filters: dict | None = None) -
       A formatted string with sources + snippets, or "No relevant documents found.".
     """
     tool_name = "search_docs"
+    # If the caller didn't pass filters explicitly, try to pull deterministic
+    # filters from the LangChain/LangGraph runtime config.
+    if filters is None:
+        try:
+            cfg_filters = (config or {}).get("configurable", {}).get("doc_filters")
+            if isinstance(cfg_filters, dict) and cfg_filters:
+                filters = cfg_filters
+        except Exception:
+            pass
 
     try:
         q = (query or "").strip()

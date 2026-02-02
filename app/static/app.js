@@ -72,6 +72,8 @@ const LS_ACCENT = "llm_code_accent_hex";      // e.g. #a281ee
 const LS_TOGGLE_BG = "llm_code_toggle_bg_hex";// e.g. #eef5ff
 const LS_CHAT_BG = "llm_code_chat_bg_hex";    // e.g. #ffffff
 
+const LS_MODEL = "llm_code_model";           // selected model name
+
 // Projects + chat metadata
 const LS_PROJECTS = "llm_code_projects_v1";   // [{id,name,created_ts}]
 const LS_SESSION_META = "llm_code_session_meta_v1"; // {session_id:{titleOverride?,projectId?,pinned?,deleted?}}
@@ -308,6 +310,46 @@ async function fetchJson(url) {
   return await r.json();
 }
 
+async function fetchModels() {
+  // Returns { models: ["modelA", "modelB", ...], default?: "modelA" }
+  return await fetchJson("/api/models");
+}
+
+async function populateModelSelect() {
+  if (!modelSelectEl) return;
+
+  let data;
+  try {
+    data = await fetchModels();
+  } catch (err) {
+    // If backend isn't wired yet, keep whatever is already in the dropdown.
+    return;
+  }
+
+  const models = Array.isArray(data?.models) ? data.models.filter((m) => typeof m === "string" && m.trim()) : [];
+  if (!models.length) return;
+
+  // Preserve current selection if possible
+  const saved = (() => { try { return localStorage.getItem(LS_MODEL) || ""; } catch { return ""; } })();
+  const preferred = (saved || data?.default || "").trim();
+
+  modelSelectEl.innerHTML = "";
+
+  models.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    modelSelectEl.appendChild(opt);
+  });
+
+  // Choose selection: saved/default if present, else first
+  const exists = preferred && models.includes(preferred);
+  modelSelectEl.value = exists ? preferred : models[0];
+
+  // Persist selection so it survives reloads
+  try { localStorage.setItem(LS_MODEL, modelSelectEl.value); } catch {}
+}
+
 function newSessionId() {
   // simple client-generated id; server treats it as an opaque string
   // (we'll migrate to server-issued ids later if desired)
@@ -541,9 +583,14 @@ function streamAnswer(userText, fileIds = []) {
     ? `&filters=${encodeURIComponent(JSON.stringify(metaFilters))}`
     : "";
 
+  const model = (() => {
+    try { return (localStorage.getItem(LS_MODEL) || "").trim(); } catch { return ""; }
+  })();
+  const modelParam = model ? `&model=${encodeURIComponent(model)}` : "";
+
   const url = `/chat/stream?message=${encodeURIComponent(
     userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}`;
+  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}${modelParam}`;
   const es = new EventSource(url);
 
   let acc = "";
@@ -927,6 +974,8 @@ function openRightbar() {
   if (!rightbarEl) return;
   rightbarEl.classList.remove("hidden");
   rightbarEl.classList.add("flex");
+  // If previously collapsed on desktop, expand it when opening
+  setRightbarCollapsed(false);
   rightbarBackdropEl?.classList.remove("hidden");
   saveJsonLS(LS_RIGHTBAR, { open: true });
 }
@@ -944,6 +993,59 @@ function closeRightbar() {
   saveJsonLS(LS_RIGHTBAR, { open: false });
 }
 
+function setRightbarCollapsed(collapsed) {
+  if (!rightbarEl) return;
+
+  if (collapsed) {
+    rightbarEl.classList.add("rightbar-collapsed");
+    rightbarEl.classList.add("is-collapsed");
+    document.body.classList.add("rightbar-collapsed");
+
+    // Save inline styles so we can restore on expand
+    rightbarEl.dataset._prevWidth = rightbarEl.style.width || "";
+    rightbarEl.dataset._prevMinWidth = rightbarEl.style.minWidth || "";
+    rightbarEl.dataset._prevMaxWidth = rightbarEl.style.maxWidth || "";
+    rightbarEl.dataset._prevPadding = rightbarEl.style.padding || "";
+    rightbarEl.dataset._prevBorderWidth = rightbarEl.style.borderWidth || "";
+    rightbarEl.dataset._prevOverflow = rightbarEl.style.overflow || "";
+
+    // Collapse to a narrow rail (desktop)
+    rightbarEl.style.width = "56px";
+    rightbarEl.style.minWidth = "56px";
+    rightbarEl.style.maxWidth = "56px";
+    rightbarEl.style.padding = "0";
+    // keep the border so the rail is visible
+    rightbarEl.style.borderWidth = rightbarEl.dataset._prevBorderWidth || "";
+    rightbarEl.style.overflow = "hidden";
+
+    // Ensure the desktop toggle stays visible/clickable
+    const toggleBtn = document.getElementById("rightbarToggleDesktop");
+    if (toggleBtn) {
+      toggleBtn.style.visibility = "visible";
+      toggleBtn.style.display = "inline-flex";
+    }
+  } else {
+    rightbarEl.classList.remove("rightbar-collapsed");
+    rightbarEl.classList.remove("is-collapsed");
+    document.body.classList.remove("rightbar-collapsed");
+
+    // Restore inline styles
+    rightbarEl.style.width = rightbarEl.dataset._prevWidth || "";
+    rightbarEl.style.minWidth = rightbarEl.dataset._prevMinWidth || "";
+    rightbarEl.style.maxWidth = rightbarEl.dataset._prevMaxWidth || "";
+    rightbarEl.style.padding = rightbarEl.dataset._prevPadding || "";
+    rightbarEl.style.borderWidth = rightbarEl.dataset._prevBorderWidth || "";
+    rightbarEl.style.overflow = rightbarEl.dataset._prevOverflow || "";
+
+    delete rightbarEl.dataset._prevWidth;
+    delete rightbarEl.dataset._prevMinWidth;
+    delete rightbarEl.dataset._prevMaxWidth;
+    delete rightbarEl.dataset._prevPadding;
+    delete rightbarEl.dataset._prevBorderWidth;
+    delete rightbarEl.dataset._prevOverflow;
+  }
+}
+
 function initRightbarControls() {
   // collapsed by default
   closeRightbar();
@@ -951,19 +1053,33 @@ function initRightbarControls() {
   const st = loadJsonLS(LS_RIGHTBAR, { open: false });
   if (st?.open) openRightbar();
 
+  // Desktop collapsed state
+  if (window.matchMedia && window.matchMedia("(min-width: 768px)").matches) {
+    setRightbarCollapsed(!st?.open);
+  }
+
   syncToolCheckboxesFromState();
 
-  rightbarToggleEl?.addEventListener("click", (e) => { e.preventDefault(); openRightbar(); });
+  rightbarToggleEl?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const isHidden = rightbarEl?.classList.contains("hidden");
+    if (isHidden) openRightbar();
+    else closeRightbar();
+  });
   rightbarCloseEl?.addEventListener("click", (e) => { e.preventDefault(); closeRightbar(); });
   rightbarBackdropEl?.addEventListener("click", () => closeRightbar());
 
   rightbarToggleDesktopEl?.addEventListener("click", (e) => {
     e.preventDefault();
-    const isHidden = rightbarEl?.classList.contains("hidden");
-    if (isHidden) openRightbar();
-    else {
-      rightbarEl?.classList.add("hidden");
-      rightbarEl?.classList.remove("flex");
+
+    // Desktop: collapse/expand the right sidebar without hiding it entirely.
+    const collapsed = rightbarEl?.classList.contains("rightbar-collapsed");
+    if (collapsed) {
+      setRightbarCollapsed(false);
+      saveJsonLS(LS_RIGHTBAR, { open: true });
+    } else {
+      setRightbarCollapsed(true);
+      // Ensure mobile backdrop is hidden
       rightbarBackdropEl?.classList.add("hidden");
       saveJsonLS(LS_RIGHTBAR, { open: false });
     }
@@ -1023,6 +1139,7 @@ function openSettingsModal() {
   if (!settingsModalEl) return;
   settingsModalEl.classList.remove("hidden");
   settingsModalEl.setAttribute("aria-hidden", "false");
+  populateModelSelect();
 }
 
 function closeSettingsModal() {
@@ -1096,10 +1213,13 @@ function initSettingsModal() {
     document.documentElement.style.setProperty("--chat-bg", v);
   });
 
-  // Model dropdown placeholder (backend wiring later)
+  // Models
+  // Load saved model selection immediately (options may be populated later).
+  const savedModel = (() => { try { return localStorage.getItem(LS_MODEL) || ""; } catch { return ""; } })();
+  if (modelSelectEl && savedModel) modelSelectEl.value = savedModel;
+
   modelSelectEl?.addEventListener("change", () => {
-    // store selection for later
-    try { localStorage.setItem("llm_code_model", modelSelectEl.value); } catch {}
+    try { localStorage.setItem(LS_MODEL, modelSelectEl.value); } catch {}
   });
 
   // Tasks placeholder (backend wiring later)

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
+import httpx
 
 from langchain_core.messages import BaseMessage
 from langchain_core.messages.utils import convert_to_openai_messages
@@ -127,10 +128,60 @@ def _read_text_best_effort(path: Path, max_chars: int) -> str:
 async def health():
     return {"ok": True}
 
+
 # Alias health check under /api to match ALB routing (/api*)
 @app.get("/api/health")
 async def api_health():
     return await health()
+
+
+# --- Models (UI Settings dropdown) ---
+
+def _ollama_base_url() -> str:
+    # Prefer explicit env; fall back to docker-for-mac host reachability.
+    return (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "http://host.docker.internal:11434").rstrip("/")
+
+
+@app.get("/api/models")
+async def api_models():
+    """Return available local models for the UI.
+
+    Currently implemented for Ollama via /api/tags.
+    Response: {"models": ["name:tag", ...], "default": "..."}
+    """
+    base = _ollama_base_url()
+    url = f"{base}/api/tags"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+    except Exception as e:
+        # Keep UI functional even if Ollama is unavailable.
+        return JSONResponse(status_code=200, content={"models": [], "default": "", "error": str(e)})
+
+    models: list[str] = []
+    try:
+        for m in (data.get("models") or []):
+            name = str(m.get("name") or "").strip()
+            if name:
+                models.append(name)
+    except Exception:
+        models = []
+
+    # De-dup while preserving order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for m in models:
+        if m in seen:
+            continue
+        seen.add(m)
+        uniq.append(m)
+
+    default_model = (os.getenv("LLM_MODEL") or os.getenv("OLLAMA_MODEL") or "").strip()
+
+    return {"models": uniq, "default": default_model}
 
 
 # --- File uploads endpoint ---
@@ -366,6 +417,7 @@ async def chat_stream(
     file_ids: str | None = None,
     tools: str | None = None,
     filters: str | None = None,
+    model: str | None = None,
 ):
     msg = (message or "").strip()
     if not msg:
@@ -393,6 +445,9 @@ async def chat_stream(
                 doc_filters = {}
         except Exception:
             doc_filters = {}
+
+    # Optional model override from UI Settings
+    model_name = (model or "").strip() or None
 
     # 1) Save user message
     try:
@@ -451,13 +506,24 @@ async def chat_stream(
         try:
             recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
 
-            async for ev in rag_llm_stream(
+            stream_kwargs = dict(
                 messages=context_msgs,
                 selected_tools=selected_tools,
                 doc_filters=doc_filters,
                 recursion_limit=recursion_limit,
                 thread_id=sid,
-            ):
+            )
+            if model_name:
+                stream_kwargs["model"] = model_name
+
+            try:
+                agen = rag_llm_stream(**stream_kwargs)
+            except TypeError:
+                # Older agent signature: ignore model override
+                stream_kwargs.pop("model", None)
+                agen = rag_llm_stream(**stream_kwargs)
+
+            async for ev in agen:
                 if ev.get("type") == "token":
                     text = str(ev.get("text", ""))
                     if not text:
@@ -510,8 +576,17 @@ async def api_chat_stream(
     file_ids: str | None = None,
     tools: str | None = None,
     filters: str | None = None,
+    model: str | None = None,
 ):
-    return await chat_stream(request, message=message, session_id=session_id, file_ids=file_ids, tools=tools, filters=filters)
+    return await chat_stream(
+        request,
+        message=message,
+        session_id=session_id,
+        file_ids=file_ids,
+        tools=tools,
+        filters=filters,
+        model=model,
+    )
 
 
 @app.get("/api/files/{file_id}")

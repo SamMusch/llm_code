@@ -179,6 +179,35 @@ body.full-bleed { overflow: hidden; }
 .group:hover .chatMenuBtn{ display: inline-flex; }
 
 /* ==============================
+   Rightbar collapsed (desktop)
+   app.js toggles .rightbar-collapsed on #rightbar
+   ============================== */
+
+#rightbar.rightbar-collapsed{
+  width: 64px !important;
+  min-width: 64px !important;
+  max-width: 64px !important;
+}
+
+#rightbar.rightbar-collapsed .px-4,
+#rightbar.rightbar-collapsed .px-3,
+#rightbar.rightbar-collapsed .p-3,
+#rightbar.rightbar-collapsed .p-4{
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+/* Collapse: hide everything except the header */
+#rightbar.rightbar-collapsed > :not(#rightbarHeader){
+  display: none !important;
+}
+
+/* In collapsed state, hide the title text so the rail stays clean */
+#rightbar.rightbar-collapsed #rightbarTitle{
+  display: none !important;
+}
+
+/* ==============================
    Settings modal readability
    ============================== */
 

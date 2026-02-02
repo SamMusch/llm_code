@@ -1,0 +1,17 @@
+{
+	"ulid": "01KGFN2A2PTMRPK53GDFXPCFNR",
+	"minTime": 1770041125791,
+	"maxTime": 1770048000000,
+	"stats": {
+		"numSamples": 9996,
+		"numSeries": 294,
+		"numChunks": 294
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KGFN2A2PTMRPK53GDFXPCFNR"
+		]
+	},
+	"version": 1
+}
