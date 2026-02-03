@@ -1,7 +1,7 @@
 {
-	"ulid": "01KGFE66H52EYN85KBZYXPBT8Z",
-	"minTime": 1770033837773,
-	"maxTime": 1770040800000,
+	"ulid": "01KGJ0ZEBMFJD4KPJKGXQ3XRWF",
+	"minTime": 1770120155439,
+	"maxTime": 1770127200000,
 	"stats": {
 		"numSamples": 8232,
 		"numSeries": 294,
@@ -10,7 +10,7 @@
 	"compaction": {
 		"level": 1,
 		"sources": [
-			"01KGFE66H52EYN85KBZYXPBT8Z"
+			"01KGJ0ZEBMFJD4KPJKGXQ3XRWF"
 		]
 	},
 	"version": 1
