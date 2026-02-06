@@ -665,7 +665,9 @@ def _build_llms(provider: str, model_name: str, fallback_model_name: str | None)
     if provider == "bedrock":
         from langchain_aws import ChatBedrock, ChatBedrockConverse
 
-        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+        region = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
+        if not region:
+            raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
 
         # Prefer Converse where available. Instantiate without an explicit boto3 client to
         # match LangChain docs; fall back to ChatBedrock if Converse isn't supported.

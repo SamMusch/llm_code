@@ -44,8 +44,10 @@ class DynamoDBChatMessageHistory(BaseChatMessageHistory):
             region
             or os.getenv("AWS_REGION")
             or os.getenv("AWS_DEFAULT_REGION")
-            or "us-east-1"
-        )
+            or ""
+        ).strip()
+        if not self.region:
+            raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
         self.table_name = table_name or os.getenv(
             "DDB_TABLE", "rag_chat_history"
         )
