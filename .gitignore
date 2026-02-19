@@ -13,3 +13,6 @@ __pycache__/
 .env.*
 llm-cmds.md
 audit-01-18.md
+observability/data/
+observability/**/wal/
+*.db
