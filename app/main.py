@@ -307,10 +307,19 @@ def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
 @lru_cache(maxsize=1)
 def _ddb_table():
     """Return the DynamoDB table used for chat history.
+
+    We fail fast if region isn't provided so we never silently fall back to a
+    personal default region and accidentally mix environments.
     Cached to avoid re-creating boto3 resources per request.
     """
-    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
-    table_name = os.getenv("DDB_TABLE", "rag_chat_history")
+    region = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
+    if not region:
+        raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
+
+    table_name = (os.getenv("DDB_TABLE") or "rag_chat_history").strip()
+    if not table_name:
+        raise RuntimeError("DDB_TABLE must be set")
+
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
 
 
