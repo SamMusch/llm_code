@@ -1,11 +1,8 @@
 """
-retriever.py
-Indexing and retrieval utilities for the RAG pipeline.
-
+retriever.py | Indexing and retrieval utilities for the RAG pipeline.
 retriever.py is now:
 	•	a vector store / retriever module, and
 	•	a tool provider for the agent.
-
 """
 
 from pathlib import Path
@@ -77,9 +74,7 @@ def _normalize_metadata(meta: dict[str, Any], body: str) -> dict[str, Any]:
 
     return out
 
-
 # Simple loader registry by extension
-
 EXT_TO_LOADER = {
     ".txt": TextLoader,
     ".md": TextLoader,
@@ -96,15 +91,10 @@ EXT_TO_LOADER = {
     ".msg": OutlookMessageLoader,
 }
 
-
 def _get_embeddings():
     """Return an embeddings client appropriate for the current runtime."""
     provider = getattr(cfg, "llm_provider", "ollama")
-
-    # AWS: use Bedrock embeddings (no Ollama dependency)
     if provider == "bedrock":
-        # Prefer a valid Bedrock embedding model id if the user provided one.
-        # Otherwise fall back to Titan Embed.
         model_id = getattr(cfg, "embedding_model", None) or "amazon.titan-embed-text-v2:0"
         return BedrockEmbeddings(model_id=model_id)
 
@@ -201,31 +191,25 @@ def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> No
         chunk_overlap=cfg.chunk_overlap,
     )
     chunks = splitter.split_documents(docs)
-
-    #embeddings = OpenAIEmbeddings(model=cfg.embedding_model)
-    embeddings = _get_embeddings()
-
+    embeddings = _get_embeddings()     # old was OpenAIEmbeddings(model=cfg.embedding_model)
     vs = FAISS.from_documents(chunks, embeddings)  # FAISS for now
     vs.save_local(str(cfg.faiss_dir))
 
 
 def load_retriever(k: int | None = None, filters: dict | None = None, fetch_k: int | None = None):
     """
-    Reload saved FAISS index → attach embedding model → return retriever interface
-    for semantic lookup.
+    Reload saved FAISS index → attach embedding model → return retriever interface for semantic lookup.
     `filters` is a deterministic metadata filter applied at retrieval time.
     """
     k = k or cfg.k  # top k docs
     fetch_k = fetch_k or max(k * 10, 50)
-
     index_file = cfg.faiss_dir / "index.faiss"
 
     # Guardrails: fail fast or optionally rebuild if the index is missing.
     if not cfg.faiss_dir.exists() or not index_file.exists():
         auto_rebuild = getattr(cfg, "auto_rebuild_index", False)
         if auto_rebuild:
-            print(
-                f"[retriever] Index not found in {cfg.faiss_dir}. Auto-rebuilding with build_index()...")
+            print(f"[retriever] Index not found in {cfg.faiss_dir}. Auto-rebuilding with build_index()...")
             build_index()  # uses cfg.docs_dir and optional cfg.max_docs
         else:
             raise RuntimeError(
@@ -267,14 +251,12 @@ def load_retriever(k: int | None = None, filters: dict | None = None, fetch_k: i
     return vs.as_retriever(search_kwargs=search_kwargs)
 
 
+# Make sure dim size matches for FAISS index & embedding model
 def verify_faiss_dim_matches_embeddings() -> None:
-    """Fail fast if the FAISS index dimension doesn't match the current embedding model.
-    """
     index_file = cfg.faiss_dir / "index.faiss"
     if not cfg.faiss_dir.exists() or not index_file.exists():
         raise RuntimeError(
-            f"FAISS index not found at {index_file}. Build it first with: `python -m rag.cli index`."
-        )
+            f"FAISS index not found at {index_file}. Build it first with: `python -m rag.cli index`.")
 
     embeddings = _get_embeddings()
 
