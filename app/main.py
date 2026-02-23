@@ -29,11 +29,9 @@ from rag.retriever import verify_faiss_dim_matches_embeddings
 from rag.history import build_chat_history
 
 from rag.observability import setup_observability
-from opentelemetry import trace
+from opentelemetry.trace import get_current_span
 from rag.steps import StepSpanCallbackHandler
-
-# Prefer step sink utilities from rag.steps (ContextVar-backed).
-from rag.steps import attach_step_sink, detach_step_sink, drain_step_sink
+from rag.steps import attach_step_sink, detach_step_sink, drain_step_sink # # Prefer step sink utilities from rag.steps (ContextVar-backed).
 
 # Optional: FastAPI auto-instrumentation (safe no-op if deps not installed)
 try:
@@ -43,39 +41,28 @@ except Exception:  # pragma: no cover
 
 app = FastAPI()
 log = logging.getLogger("uvicorn.error")
-
-# Bootstrap OpenTelemetry early so middleware/instrumentation picks up the configured providers.
-# Fully env-driven via OTEL_*; safe no-op if disabled/misconfigured.
 setup_observability(service_name="llm_code")
-
-# Auto-instrument FastAPI requests (spans/metrics/log correlation). Requires
-# `opentelemetry-instrumentation-fastapi` in requirements.
 _otel_disabled = os.getenv("OTEL_SDK_DISABLED", "").strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 if (not _otel_disabled) and FastAPIInstrumentor is not None:
     try:
         FastAPIInstrumentor.instrument_app(app)
     except Exception:
-        # Never break the app if instrumentation fails.
-        pass
+        pass # Never break the app if instrumentation fails.
 
 
+# Fail fast if index built with a different embedding model.
 @app.on_event("startup")
 def _startup_fail_fast() -> None:
-    # Allow skipping fail-fast via env var (e.g., during FAISS rebuild)
     if os.getenv("SKIP_FAIL_FAST", "false").lower() in ("1", "true"):
         print("[startup] SKIP_FAIL_FAST enabled: skipping FAISS dimension check.")
         return
-
-    # Fail fast on common RAG misconfig: index built with a different embedding model.
-    try:
+    try: 
         verify_faiss_dim_matches_embeddings()
     except Exception as e:
         print(f"[startup] Fail-fast check failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-
 BASE_DIR = Path(__file__).resolve().parent
-
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -100,18 +87,11 @@ def _session_upload_dir(session_id: str) -> Path:
 
 
 def _read_text_best_effort(path: Path, max_chars: int) -> str:
-    """Best-effort text extraction for attachments.
-
-    Current implementation supports plain text-ish files only.
-    PDFs/Office docs are not parsed here.
-    """
+    """Text extraction for attachments."""
     suffix = path.suffix.lower()
-
-    # Plain text formats
     if suffix in {".txt", ".md", ".json", ".csv", ".log", ".yaml", ".yml"}:
         try:
             data = path.read_bytes()
-            # Try utf-8; fall back to latin-1 to avoid hard failures
             try:
                 text = data.decode("utf-8")
             except Exception:
@@ -119,25 +99,19 @@ def _read_text_best_effort(path: Path, max_chars: int) -> str:
             return text[:max_chars]
         except Exception:
             return ""
-
-    # Unsupported types: keep empty so we don't mislead
-    return ""
+    return ""       # Unsupported types
 
 
-# Health check endpoint for ALB
-@app.get("/health")
+# Health checks for ALB
+@app.get("/health")   
 async def health():
     return {"ok": True}
-
-
-# Alias health check under /api to match ALB routing (/api*)
 @app.get("/api/health")
 async def api_health():
     return await health()
 
 
 # --- Models (UI Settings dropdown) ---
-
 def _ollama_base_url() -> str:
     # Prefer explicit env; fall back to docker-for-mac host reachability.
     return (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "http://host.docker.internal:11434").rstrip("/")
@@ -146,7 +120,6 @@ def _ollama_base_url() -> str:
 @app.get("/api/models")
 async def api_models():
     """Return available local models for the UI.
-
     Currently implemented for Ollama via /api/tags.
     Response: {"models": ["name:tag", ...], "default": "..."}
     """
@@ -181,7 +154,6 @@ async def api_models():
         uniq.append(m)
 
     default_model = (os.getenv("LLM_MODEL") or os.getenv("OLLAMA_MODEL") or "").strip()
-
     return {"models": uniq, "default": default_model}
 
 
@@ -189,16 +161,13 @@ async def api_models():
 @app.post("/api/files")
 async def api_upload_files(session_id: str, files: list[UploadFile] = File(...)):
     """Upload one or more files for a session.
-
     Returns: {"files": [{"id": "...", "name": "...", "size": 123}]}
-
     Notes:
     - Files are stored on local disk under UPLOAD_DIR/session_id.
     - Only plain-text-ish files are currently injected into chat context.
     """
     if not session_id:
         raise HTTPException(status_code=400, detail="Missing session_id")
-
     if not files:
         raise HTTPException(status_code=400, detail="No files")
 
@@ -234,39 +203,12 @@ async def api_upload_files(session_id: str, files: list[UploadFile] = File(...))
                 await f.close()
             except Exception:
                 pass
-
         out.append({"id": fid, "name": name, "size": written, "content_type": (f.content_type or "")})
-
     return {"files": out}
 
 
 
 
-# Helper to get current OTEL trace id (hex)
-
-def _trace_id_hex() -> str:
-    try:
-        span = trace.get_current_span()
-        ctx = span.get_span_context() if span else None
-        if not ctx or not getattr(ctx, "trace_id", 0):
-            return ""
-        return f"{ctx.trace_id:032x}"
-    except Exception:
-        return ""
-
-
-def _short_json(v: object, limit: int = 800) -> str:
-    """Best-effort short JSON/string representation for logs."""
-    try:
-        s = json.dumps(v, default=str)
-    except Exception:
-        try:
-            s = str(v)
-        except Exception:
-            s = "<unprintable>"
-    if len(s) > limit:
-        return s[:limit] + "...(truncated)"
-    return s
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -281,32 +223,12 @@ async def app_page(request: Request):
 
 
 
-def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
-    """Convert LangChain messages into OpenAI-style dicts: {role, content}.
-    This keeps our downstream expectations intact while delegating conversion logic to LangChain.
-    """
-    try:
-        converted = convert_to_openai_messages(msgs)
-        # convert_to_openai_messages returns list[dict] for a sequence input
-        return list(converted) if isinstance(converted, list) else [converted]
-    except Exception:
-        # Fallback: preserve behavior in worst case
-        out: list[dict] = []
-        for m in msgs:
-            try:
-                out.append({"role": "user", "content": str(getattr(m, "content", ""))})
-            except Exception:
-                out.append({"role": "user", "content": ""})
-        return out
-
 
 
 @lru_cache(maxsize=1)
 def _ddb_table():
-    """Return the DynamoDB table used for chat history.
-
-    We fail fast if region isn't provided so we never silently fall back to a
-    personal default region and accidentally mix environments.
+    """Return DynamoDB table used for chat history.
+    Fail fast if region isn't provided.
     Cached to avoid re-creating boto3 resources per request.
     """
     region = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
@@ -369,7 +291,6 @@ def _five_word_title(text: str) -> str:
 @app.get("/api/sessions")
 async def api_list_sessions(request: Request, limit: int = 50):
     """List recent session_ids for the sidebar.
-
     Implementation note: uses Scan (OK for now). For scale, add a Sessions table or a GSI.
     """
     # Local mode: do not touch DynamoDB (avoids needing AWS_REGION/AWS creds locally).
@@ -377,10 +298,8 @@ async def api_list_sessions(request: Request, limit: int = 50):
         return {"sessions": []}
 
     table = _ddb_table()
-
     prefix = f"{_app_env()}#{_principal_id_from_request(request)}#"
 
-    # Containment fix: filter the scan by the scoped SessionId prefix.
     # (DynamoDBChatMessageHistory stores the PK as `SessionId`.)
     resp = table.scan(
         FilterExpression=(
@@ -454,7 +373,7 @@ async def api_get_session(request: Request, session_id: str, limit: int = 200):
     msgs = history.messages
     return {
         "session_id": session_id,
-        "messages": lc_messages_to_dicts(msgs),
+        "messages": list(convert_to_openai_messages(msgs)),
     }
 
 
@@ -547,7 +466,12 @@ async def chat_stream(
         yield {"event": "start", "data": "ok"}
         full: list[str] = []
 
-        trace_id = _trace_id_hex()
+        try:
+            span = get_current_span()
+            ctx = span.get_span_context() if span else None
+            trace_id = f"{ctx.trace_id:032x}" if ctx and getattr(ctx, "trace_id", 0) else ""
+        except Exception:
+            trace_id = ""
         meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools, "filters": doc_filters})
         yield {"event": "meta", "data": meta}
 
