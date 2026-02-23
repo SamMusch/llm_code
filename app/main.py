@@ -11,6 +11,7 @@ from pathlib import Path
 
 import mimetypes
 import boto3
+from boto3.dynamodb.conditions import Attr
 
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -25,7 +26,7 @@ from langchain_core.messages.utils import convert_to_openai_messages
 
 from rag.agent import llm_stream as rag_llm_stream
 from rag.retriever import verify_faiss_dim_matches_embeddings
-from rag.history import DynamoDBChatMessageHistory
+from rag.history import build_chat_history
 
 from rag.observability import setup_observability
 from opentelemetry import trace
@@ -280,12 +281,8 @@ async def app_page(request: Request):
 
 
 
-
-
-
 def lc_messages_to_dicts(msgs: list[BaseMessage]) -> list[dict]:
     """Convert LangChain messages into OpenAI-style dicts: {role, content}.
-
     This keeps our downstream expectations intact while delegating conversion logic to LangChain.
     """
     try:
@@ -323,9 +320,32 @@ def _ddb_table():
     return boto3.resource("dynamodb", region_name=region).Table(table_name)
 
 
-def _five_word_title(text: str) -> str:
-    """Short sidebar title ---> first 5 words
+# --- Helper functions for environment and scoping ---
+def _app_env() -> str:
+    return (os.getenv("APP_ENV") or "local").strip().lower()
+
+
+def _principal_id_from_request(request: Request) -> str:
+    """Derive principal_id for scoping.
+    AWS (ALB/Cognito): use `x-amzn-oidc-identity` (Cognito `sub`) when present.
+    Local: fall back to USER_ID or 'local'.
     """
+    sub = (request.headers.get("x-amzn-oidc-identity") or "").strip()
+    if sub:
+        return f"u#{sub}"
+
+    fallback = (os.getenv("USER_ID") or "local").strip()
+    if fallback.startswith(("u#", "g#")):
+        return fallback
+    return f"u#{fallback}"
+
+
+def _scoped_id(session_id: str, request: Request) -> str:
+    """Scope a UI session_id into a storage/checkpointer thread id."""
+    return f"{_app_env()}#{_principal_id_from_request(request)}#{session_id}"
+
+# Sidebar title ---> first 5 words
+def _five_word_title(text: str) -> str:
     if not text:
         return "Untitled"
     s = " ".join(str(text).strip().split())
@@ -347,23 +367,38 @@ def _five_word_title(text: str) -> str:
 
 
 @app.get("/api/sessions")
-async def api_list_sessions(limit: int = 50):
+async def api_list_sessions(request: Request, limit: int = 50):
     """List recent session_ids for the sidebar.
 
     Implementation note: uses Scan (OK for now). For scale, add a Sessions table or a GSI.
     """
+    # Local mode: do not touch DynamoDB (avoids needing AWS_REGION/AWS creds locally).
+    if _app_env() == "local":
+        return {"sessions": []}
+
     table = _ddb_table()
 
-    # Small table expected during pilot; scan all items.
-    resp = table.scan()
+    prefix = f"{_app_env()}#{_principal_id_from_request(request)}#"
+
+    # Containment fix: filter the scan by the scoped SessionId prefix.
+    # (DynamoDBChatMessageHistory stores the PK as `SessionId`.)
+    resp = table.scan(
+        FilterExpression=(
+            Attr("SessionId").begins_with(prefix) |
+            Attr("session_id").begins_with(prefix)
+        )
+    )
 
     # Track: last_ts (for ordering) + first user message (for title)
     sessions: dict[str, dict] = {}
 
     for item in resp.get("Items", []) or []:
-        sid = item.get("session_id")
-        if not sid:
+        raw_sid = item.get("SessionId") or item.get("session_id")
+        if not raw_sid:
             continue
+
+        # UI should see the unscoped session_id
+        sid = raw_sid[len(prefix):] if str(raw_sid).startswith(prefix) else str(raw_sid)
 
         # ts is stored as Number; be defensive
         try:
@@ -408,9 +443,14 @@ async def api_list_sessions(limit: int = 50):
 
 
 @app.get("/api/sessions/{session_id}")
-async def api_get_session(session_id: str, limit: int = 200):
+async def api_get_session(request: Request, session_id: str, limit: int = 200):
     """Load messages for a session (oldest -> newest)."""
-    history = DynamoDBChatMessageHistory(session_id=session_id, limit=limit)
+    history = build_chat_history(
+        session_id=session_id,
+        principal_id=_principal_id_from_request(request),
+        env=_app_env(),
+        history_size=limit,
+    )
     msgs = history.messages
     return {
         "session_id": session_id,
@@ -435,7 +475,12 @@ async def chat_stream(
         return EventSourceResponse(empty())
 
     sid = session_id or request.headers.get("X-Session-Id") or str(uuid.uuid4())
-    history = DynamoDBChatMessageHistory(session_id=sid, limit=20)
+    history = build_chat_history(
+        session_id=sid,
+        principal_id=_principal_id_from_request(request),
+        env=_app_env(),
+        history_size=20,
+    )
 
     # Optional tool gating from UI (comma-separated). Examples: "database,placeholder1"
     selected_tools: list[str] = []
@@ -520,7 +565,7 @@ async def chat_stream(
                 selected_tools=selected_tools,
                 doc_filters=doc_filters,
                 recursion_limit=recursion_limit,
-                thread_id=sid,
+                thread_id=_scoped_id(sid, request),
             )
             if model_name:
                 stream_kwargs["model"] = model_name

@@ -1,140 +1,75 @@
 import os
-import time
-import boto3
-from boto3.dynamodb.conditions import Key
+from typing import Optional
 
+from langchain_community.chat_message_histories.dynamodb import DynamoDBChatMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.messages import (
-    BaseMessage,
-    HumanMessage,
-    AIMessage,
-    SystemMessage,
-)
 
 
-class DynamoDBChatMessageHistory(BaseChatMessageHistory):
+def _norm(s: Optional[str], default: str) -> str:
+    v = (s or default).strip().lower()
+    return v or default
+
+
+# Local-only in-memory history store (keyed by fully-scoped session id).
+_LOCAL_HISTORIES: dict[str, InMemoryChatMessageHistory] = {}
+
+
+def _local_history(scoped_session_id: str) -> InMemoryChatMessageHistory:
+    h = _LOCAL_HISTORIES.get(scoped_session_id)
+    if h is None:
+        h = InMemoryChatMessageHistory()
+        _LOCAL_HISTORIES[scoped_session_id] = h
+    return h
+
+
+def build_chat_history(
+    session_id: str,
+    *,
+    # Caller should pass the authenticated principal id in AWS (e.g., Cognito sub).
+    # For local usage, this can be left None and will fall back to USER_ID or "local".
+    principal_id: Optional[str] = None,
+    env: Optional[str] = None,
+    table_name: Optional[str] = None,
+    region_name: Optional[str] = None,
+    ttl_seconds: Optional[int] = None,
+    history_size: Optional[int] = 20,
+) -> BaseChatMessageHistory:
+    """Create a LangChain DynamoDBChatMessageHistory with strong env/user scoping.
+
+    We isolate records by namespacing the session_id:
+        <env>#<principal_id>#<session_id>
+
+    This prevents local (ollama) and aws (ecs/bedrock) sessions from colliding.
+
+    LangChain reference:
+    https://reference.langchain.com/v0.3/python/community/chat_message_histories/langchain_community.chat_message_histories.dynamodb.DynamoDBChatMessageHistory.html
     """
-    LangChain-style chat history backed by DynamoDB.
-    One item per message.
-    """
 
-    def __init__(
-        self,
-        session_id: str,
-        table_name: str | None = None,
-        region: str | None = None,
-        env: str | None = None,
-        user_id: str = "",
-        limit: int = 20,
-    ):
-        self.session_id = session_id
-        self.user_id = user_id or os.getenv("USER_ID", "")
-        self.limit = limit
+    app_env = _norm(env or os.getenv("APP_ENV"), "local")
+    pid = (principal_id or os.getenv("USER_ID") or "local").strip()
 
-        # Environment namespace to prevent local (ollama) and aws (bedrock) sessions from colliding.
-        # Prefer explicit env arg; otherwise use APP_ENV; default to "local".
-        self.env = (env or os.getenv("APP_ENV") or "local").strip().lower()
+    # Critical: make collisions impossible across environments and users.
+    scoped_session_id = f"{app_env}#{pid}#{session_id}".strip()
 
-        # Composite partition key (table PK is still `session_id`).
-        # This makes the effective key: (env, user_id, session_id)
-        # without requiring a table schema change.
-        self.session_id_key = f"{self.env}#{self.user_id}#{self.session_id}"
+    # Local mode: never touch DynamoDB. Keep chat history in memory.
+    if app_env == "local":
+        return _local_history(scoped_session_id)
 
-        self.region = (
-            region
-            or os.getenv("AWS_REGION")
-            or os.getenv("AWS_DEFAULT_REGION")
-            or ""
-        ).strip()
-        if not self.region:
-            raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
-        self.table_name = table_name or os.getenv(
-            "DDB_TABLE", "rag_chat_history"
-        )
+    tname = table_name or os.getenv("DDB_TABLE", "rag_chat_history")
+    region = region_name or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
+    if not region:
+        raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
 
-        self._table = boto3.resource(
-            "dynamodb", region_name=self.region
-        ).Table(self.table_name)
-
-    # -------- LangChain required API --------
-
-    @property
-    def messages(self) -> list[BaseMessage]:
-        """
-        Load the last N messages for this session, ordered oldest → newest.
-        """
-        resp = self._table.query(
-            KeyConditionExpression=Key("session_id").eq(self.session_id_key),
-            ScanIndexForward=False,  # newest first
-            Limit=self.limit,
-        )
-
-        items = list(reversed(resp.get("Items", [])))
-
-        out: list[BaseMessage] = []
-        for i in items:
-            role = i.get("role")
-            text = i.get("message", "")
-
-            if role == "user":
-                out.append(HumanMessage(content=text))
-            elif role == "assistant":
-                out.append(AIMessage(content=text))
-            elif role == "system":
-                out.append(SystemMessage(content=text))
-            else:
-                # fallback
-                out.append(HumanMessage(content=text))
-
-        return out
-
-    def add_message(self, message: BaseMessage) -> None:
-        """
-        Required by BaseChatMessageHistory.
-        """
-        if isinstance(message, HumanMessage):
-            role = "user"
-        elif isinstance(message, AIMessage):
-            role = "assistant"
-        elif isinstance(message, SystemMessage):
-            role = "system"
-        else:
-            role = "user"
-
-        self._put_item(role=role, text=message.content)
-
-    def clear(self) -> None:
-        """
-        Optional; not implemented to avoid table scans.
-        Use TTL instead if you need cleanup.
-        """
-        raise NotImplementedError("Use TTL or batch delete externally")
-
-    # -------- Convenience helpers --------
-
-    def add_user_message(self, text: str) -> None:
-        self._put_item(role="user", text=text, extra=None)
-
-    def add_ai_message(self, text: str, trace_id: str | None = None) -> None:
-        extra: dict[str, str] = {}
-        if trace_id:
-            extra["trace_id"] = trace_id
-        self._put_item(role="assistant", text=text, extra=extra or None)
-
-    # -------- Internal --------
-
-    def _put_item(self, role: str, text: str, extra: dict | None = None) -> None:
-        item = {
-            # Table PK
-            "session_id": self.session_id_key,
-            "ts": int(time.time() * 1000),
-            "role": role,
-            "user_id": self.user_id,
-            "env": self.env,
-            "session_id_raw": self.session_id,
-            "message": text,
-        }
-        if extra:
-            item.update(extra)
-
-        self._table.put_item(Item=item)
+    # Note: DynamoDBChatMessageHistory stores the conversation as a single item
+    # under History (a list of serialized messages).
+    return DynamoDBChatMessageHistory(
+        table_name=tname,
+        session_id=scoped_session_id,
+        primary_key_name="SessionId",
+        history_messages_key="History",
+        ttl=ttl_seconds,
+        ttl_key_name=os.getenv("DDB_TTL_KEY", "expireAt"),
+        history_size=history_size,
+        boto3_session=None,  # uses default boto3 resolution chain
+    )

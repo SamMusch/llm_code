@@ -572,16 +572,69 @@ function buildMetadataFilters() {
   return filters;
 }
 
+// Build filters_json payload for persistence/auditing (section -> selected options list)
+// This is separate from `filters` (doc retrieval filters).
+function buildFiltersJson() {
+  const out = {};
+
+  // Right sidebar tools
+  const tools = getSelectedTools();
+  out.TOOLS = Array.isArray(tools) ? tools.slice() : [];
+
+  // Placeholder section (kept for UI parity even if empty today)
+  out.PLACEHOLDER = [];
+
+  // Metadata section (store as a list of key=value strings to preserve what the user selected)
+  const meta = buildMetadataFilters();
+  const metaList = [];
+  Object.entries(meta || {}).forEach(([k, v]) => {
+    if (v == null) return;
+    if (Array.isArray(v)) {
+      if (v.length) metaList.push(`${k}=${v.join(",")}`);
+    } else {
+      const s = String(v).trim();
+      if (s) metaList.push(`${k}=${s}`);
+    }
+  });
+  out.METADATA = metaList;
+
+  return out;
+}
+
 function streamAnswer(userText, fileIds = []) {
   const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
   const fileParam = ids.length ? `&file_ids=${encodeURIComponent(ids.join(","))}` : "";
 
   const tools = getSelectedTools();
   const toolsParam = tools.length ? `&tools=${encodeURIComponent(tools.join(","))}` : "";
+
+  // Retrieval filters (used by backend for doc filtering)
   const metaFilters = buildMetadataFilters();
   const filtersParam = Object.keys(metaFilters).length
     ? `&filters=${encodeURIComponent(JSON.stringify(metaFilters))}`
     : "";
+
+  // Persistence filters_json (section -> selected list)
+  const filtersJson = buildFiltersJson();
+  const filtersJsonParam = Object.keys(filtersJson).length
+    ? `&filters_json=${encodeURIComponent(JSON.stringify(filtersJson))}`
+    : "";
+
+  // Project context (from session meta -> projects list)
+  let projectId = "";
+  let projectName = "";
+  try {
+    const m = getMeta(activeSessionId);
+    projectId = (m.projectId || "").trim();
+    if (projectId) {
+      const p = (loadProjects() || []).find((x) => (x.id || "") === projectId);
+      projectName = (p?.name || "").trim();
+    }
+  } catch {
+    // ignore
+  }
+  const projectIdParam = projectId ? `&project_id=${encodeURIComponent(projectId)}` : "";
+  const projectNameParam = projectName ? `&project_name=${encodeURIComponent(projectName)}` : "";
 
   const model = (() => {
     try { return (localStorage.getItem(LS_MODEL) || "").trim(); } catch { return ""; }
@@ -590,7 +643,7 @@ function streamAnswer(userText, fileIds = []) {
 
   const url = `/chat/stream?message=${encodeURIComponent(
     userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}${modelParam}`;
+  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}${filtersJsonParam}${projectIdParam}${projectNameParam}${modelParam}`;
   const es = new EventSource(url);
 
   let acc = "";

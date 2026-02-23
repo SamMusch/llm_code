@@ -134,6 +134,9 @@ services:
       OTEL_PYTHON_LOG_CORRELATION: "true"
       # Optional: override/add attributes without code changes
       # OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local
+      # ---- Local isolation override ----
+      APP_ENV: local
+      DDB_TABLE: ""
     volumes:
       - .:/app
       - ~/.aws:/root/.aws:ro
