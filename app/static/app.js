@@ -312,7 +312,7 @@ async function fetchJson(url) {
 
 async function fetchModels() {
   // Returns { models: ["modelA", "modelB", ...], default?: "modelA" }
-  return await fetchJson("/api/models");
+  return await fetchJson("/app/api/models");
 }
 
 async function populateModelSelect() {
@@ -387,14 +387,14 @@ function renderMessages(msgs) {
 
 // Helper to refresh only the sidebar sessions list, without re-rendering messages or steps panel
 async function refreshSessionsListOnly() {
-  const data = await fetchJson("/api/sessions?limit=50");
+  const data = await fetchJson("/app/api/sessions?limit=50");
   sessions = data.sessions || [];
   renderChatList(sessions);
   // Do NOT call openSession() here; it re-renders messages and would remove the steps panel.
 }
 
 async function loadSessions() {
-  const data = await fetchJson("/api/sessions?limit=50");
+  const data = await fetchJson("/app/api/sessions?limit=50");
   sessions = data.sessions || [];
   renderChatList(sessions);
 
@@ -427,7 +427,7 @@ async function openSession(sessionId) {
   }
 
   const data = await fetchJson(
-    `/api/sessions/${encodeURIComponent(sessionId)}?limit=200`
+    `/app/api/sessions/${encodeURIComponent(sessionId)}?limit=200`
   );
 
   // data.messages is already [{role, content, ts?}] via lc_messages_to_dicts
@@ -641,7 +641,7 @@ function streamAnswer(userText, fileIds = []) {
   })();
   const modelParam = model ? `&model=${encodeURIComponent(model)}` : "";
 
-  const url = `/chat/stream?message=${encodeURIComponent(
+  const url = `/app/chat/stream?message=${encodeURIComponent(
     userText
   )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}${filtersJsonParam}${projectIdParam}${projectNameParam}${modelParam}`;
   const es = new EventSource(url);
@@ -831,7 +831,7 @@ async function uploadSelectedFiles(fileList) {
   const fd = new FormData();
   files.forEach((file) => fd.append("files", file, file.name));
 
-  const url = `/api/files?session_id=${encodeURIComponent(activeSessionId)}`;
+  const url = `/app/api/files?session_id=${encodeURIComponent(activeSessionId)}`;
   const r = await fetch(url, {
     method: "POST",
     body: fd,

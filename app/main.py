@@ -64,6 +64,7 @@ def _startup_fail_fast() -> None:
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/app/static", StaticFiles(directory=str(BASE_DIR / "static")), name="app-static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # --- File uploads (UI attachments) ---
@@ -106,6 +107,7 @@ def _read_text_best_effort(path: Path, max_chars: int) -> str:
 @app.get("/health")   
 async def health():
     return {"ok": True}
+@app.get("/app/api/health")
 @app.get("/api/health")
 async def api_health():
     return await health()
@@ -117,6 +119,7 @@ def _ollama_base_url() -> str:
     return (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "http://host.docker.internal:11434").rstrip("/")
 
 
+@app.get("/app/api/models")
 @app.get("/api/models")
 async def api_models():
     """Return available local models for the UI.
@@ -158,6 +161,7 @@ async def api_models():
 
 
 # --- File uploads endpoint ---
+@app.post("/app/api/files")
 @app.post("/api/files")
 async def api_upload_files(session_id: str, files: list[UploadFile] = File(...)):
     """Upload one or more files for a session.
@@ -288,6 +292,7 @@ def _five_word_title(text: str) -> str:
     return " ".join(words)
 
 
+@app.get("/app/api/sessions")
 @app.get("/api/sessions")
 async def api_list_sessions(request: Request, limit: int = 50):
     """List recent session_ids for the sidebar.
@@ -361,6 +366,7 @@ async def api_list_sessions(request: Request, limit: int = 50):
     return {"sessions": out}
 
 
+@app.get("/app/api/sessions/{session_id}")
 @app.get("/api/sessions/{session_id}")
 async def api_get_session(request: Request, session_id: str, limit: int = 200):
     """Load messages for a session (oldest -> newest)."""
@@ -377,6 +383,7 @@ async def api_get_session(request: Request, session_id: str, limit: int = 200):
     }
 
 
+@app.get("/app/chat/stream")
 @app.get("/chat/stream")
 async def chat_stream(
     request: Request,
@@ -546,6 +553,7 @@ async def chat_stream(
     )
 
 # Alias streaming chat under /api to match UI calls (/api/chat/stream)
+@app.get("/app/api/chat/stream")
 @app.get("/api/chat/stream")
 async def api_chat_stream(
     request: Request,
@@ -567,6 +575,7 @@ async def api_chat_stream(
     )
 
 
+@app.get("/app/api/files/{file_id}")
 @app.get("/api/files/{file_id}")
 async def api_get_file(file_id: str, session_id: str):
     if not session_id:
