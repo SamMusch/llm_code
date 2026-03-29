@@ -88,16 +88,33 @@ def _normalize_metadata(meta: dict[str, Any], body: str) -> dict[str, Any]:
     """Keep only the allowed metadata fields and normalize types."""
     out: dict[str, Any] = {}
 
-    if isinstance(meta.get("title"), str):
-        out["title"] = meta["title"]
+    # Canonical title: support local/frontmatter `title`, SharePoint/AppFlow `name`,
+    # and finally fall back to the source filename.
+    title = meta.get("title") or meta.get("name")
+    if not (isinstance(title, str) and title.strip()):
+        source = meta.get("source")
+        if isinstance(source, str) and source.strip():
+            title = Path(source).name
+    if isinstance(title, str) and title.strip():
+        out["title"] = title.strip()
 
-    for k in ["kMDItemContentCreationDate", "kMDItemContentModificationDate"]:
-        v = meta.get(k)
-        if isinstance(v, str):
-            try:
-                out[k] = int(datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp())
-            except Exception:
-                pass
+    # Canonical timestamps: support local macOS-style keys and SharePoint/AppFlow keys
+    timestamp_key_map = {
+        "kMDItemContentCreationDate": ["kMDItemContentCreationDate", "createdDateTime"],
+        "kMDItemContentModificationDate": ["kMDItemContentModificationDate", "lastModifiedDateTime"],
+    }
+    for out_key, candidate_keys in timestamp_key_map.items():
+        for candidate_key in candidate_keys:
+            v = meta.get(candidate_key)
+            if isinstance(v, str):
+                try:
+                    out[out_key] = int(datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp())
+                    break
+                except Exception:
+                    pass
+            elif isinstance(v, (int, float)):
+                out[out_key] = int(v)
+                break
 
     # word_count: compute from body
     out["word_count"] = len(body.split())
@@ -193,10 +210,14 @@ def _load_documents(input_dir: Path) -> list:
     # Parse frontmatter + attach normalized per-document metadata
     for d in docs:
         text = getattr(d, "page_content", "") or ""
+        existing_meta = dict(getattr(d, "metadata", {}) or {})
         meta_raw, body = _parse_frontmatter(text)
-        norm = _normalize_metadata(meta_raw, body)
+        combined_meta = {**existing_meta, **meta_raw}
+        norm = _normalize_metadata(combined_meta, body)
         if norm:
-            d.metadata = {**(d.metadata or {}), **norm}
+            d.metadata = {**existing_meta, **norm}
+        else:
+            d.metadata = existing_meta
         d.page_content = body
 
     print(

@@ -13,13 +13,13 @@
   --br-light-blue: #ddf3fb;
 
   /* App tokens */
-  --accent: #1e9dcb;
-  --toggle-bg: var(--br-light-blue);
+  --accent: #bfbfbf;
+  --toggle-bg: var(--br-light-gray);
   --chat-bg: var(--br-white);
 
   --primary: var(--accent);
-  --primary-contrast: #fff;
-  --primaryHover: #178bb6;
+  --primary-contrast: #000;
+  --primaryHover: #a6a6a6;
   --ring: color-mix(in srgb, var(--accent) 25%, transparent);
 
   /* Fallback / default light-mode tokens */
@@ -28,11 +28,11 @@
   --bg-sidebar: var(--br-white);
   --bg-input: var(--br-white);
   --bg-subtle: var(--br-light-blue);
-  --border: rgba(0, 0, 0, 0.12);
+  --border: rgba(0, 0, 0, 0.06);
   --text-main: var(--br-black);
   --text-muted: var(--br-dark-gray);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.10);
   --radius-sm: 1rem;
   --radius-md: 1.5rem;
   --radius-lg: 2rem;
@@ -66,7 +66,7 @@ html[data-mode="light"]{
   --bg-page: var(--br-light-gray);
   --bg-panel: var(--br-white);
   --bg-sidebar: var(--br-white);
-  --border: rgba(0, 0, 0, 0.12);
+  --border: rgba(0, 0, 0, 0.06);
   --text-main: var(--br-black);
   --text-muted: var(--br-dark-gray);
 }
@@ -90,19 +90,21 @@ html[data-mode="dark"]{
    app.js sets html[data-bg]
    ============================== */
 
-/* Matching = panels inherit user chat background */
+/* Matching = outer shell uses toggle background, chat canvas uses chat background */
 html[data-bg="matching"]{
+  --bg-shell: var(--toggle-bg);
   --bg-chat: var(--chat-bg);
 }
 
-/* Gray = neutral gray chat background like ChatGPT */
+/* Gray = same mapping; keep outer shell and chat canvas independently configurable */
 html[data-bg="gray"]{
-  --bg-chat: var(--toggle-bg);
+  --bg-shell: var(--toggle-bg);
+  --bg-chat: var(--chat-bg);
 }
 
-/* Dark + gray combo */
-html[data-mode="dark"][data-bg="gray"]{
-  --bg-chat: #020617;        /* slate-950 */
+/* Dark mode fallback */
+html[data-mode="dark"]{
+  --bg-shell: var(--toggle-bg);
 }
 
 /* ==============================
@@ -117,37 +119,61 @@ html[data-mode] body{
 }
 
 aside[aria-label="Sidebar"]{
-  background: var(--bg-sidebar) !important;
+  background: var(--bg-shell) !important;
   color: var(--text-main);
-  border-color: var(--border);
-  box-shadow: var(--shadow-sm);
+  border: 0 !important;
+}
+
+/* Remove only specific top/bottom utility dividers (keep Projects/Conversations ones) */
+aside[aria-label="Sidebar"] > div:first-child.border-b,
+aside[aria-label="Sidebar"] > div:last-child.border-t{
+  border: 0 !important;
 }
 
 header, footer{
   background: var(--bg-panel) !important;
-  border-color: var(--border) !important;
+  border: 0 !important;
   color: var(--text-main);
-  box-shadow: var(--shadow-sm);
+}
+
+main[aria-label="Chat"]{
+  background: var(--bg-shell) !important;
+}
+
+main[aria-label="Chat"] > header,
+main[aria-label="Chat"] > footer{
+  background: var(--bg-shell) !important;
 }
 
 /* Chat surface */
-#chatMessages{
+section[aria-label="Messages"]{
   background: var(--bg-chat);
-  border-radius: var(--radius-md);
-  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+#chatMessages{
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* Assistant bubbles */
 #chatMessages .bg-white{
   background: var(--bg-panel) !important;
   color: var(--text-main) !important;
-  border-color: var(--border) !important;
+  border: 0 !important;
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
+}
+
+#chatMessages .bg-zinc-50,
+#chatMessages .bg-zinc-100,
+#chatMessages .bg-gray-50,
+#chatMessages .bg-gray-100{
+  background: var(--bg-chat) !important;
 }
 
 /* Borders + muted text */
-.border-slate-200{ border-color: var(--border) !important; }
+.border-slate-200{ border: 0 !important; }
 .text-slate-500{ color: var(--text-muted) !important; }
 
 /* Preserve full-bleed behavior used by base.html */
@@ -158,8 +184,9 @@ body.full-bleed { overflow: hidden; }
   background: var(--primary);
   color: var(--primary-contrast);
   color: color-contrast(var(--primary) vs #000, #fff);
+  border: 0;
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 .btn-primary:hover{ background: var(--primaryHover); }
 .btn-primary:focus-visible{ box-shadow: 0 0 0 4px var(--ring); }
@@ -168,13 +195,13 @@ body.full-bleed { overflow: hidden; }
 /* State helpers used by app.js */
 .chatitem-active{
   background: var(--primary) !important;
-  border-color: var(--primary) !important;
+  border: 0 !important;
   color: var(--primary-contrast) !important;
   color: color-contrast(var(--primary) vs #000, #fff) !important;
 }
 .bubble-user{
   background: var(--primary) !important;
-  border-color: var(--primary) !important;
+  border: 0 !important;
   color: var(--primary-contrast) !important;
   color: color-contrast(var(--primary) vs #000, #fff) !important;
 }
@@ -198,34 +225,37 @@ body.full-bleed { overflow: hidden; }
   border-radius: var(--radius-sm);
 }
 
-
-/* ==============================
-   input,
-   textarea,
-   select,
-   button{
+input,
+textarea,
+select,
+button{
   font: inherit;
 }
 
 input[type="text"],
 input[type="search"],
+input[type="date"],
+input[type="number"],
 textarea,
 select{
   background: var(--bg-input) !important;
   color: var(--text-main) !important;
-  border: 1px solid var(--border) !important;
+  border: 0 !important;
   border-radius: var(--radius-sm) !important;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 input[type="text"]::placeholder,
 input[type="search"]::placeholder,
+input[type="number"]::placeholder,
 textarea::placeholder{
-  color: var(--text-muted) !important;
+  color: color-mix(in srgb, var(--text-main) 38%, white) !important;
 }
 
 input[type="text"]:focus,
 input[type="search"]:focus,
+input[type="date"]:focus,
+input[type="number"]:focus,
 textarea:focus,
 select:focus{
   outline: none;
@@ -237,7 +267,48 @@ a,
 button{
   transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
-   ============================== */
+
+#chatInput{
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#chatInput::placeholder{
+  color: var(--text-muted) !important;
+}
+
+/* Right sidebar filter inputs: lighter example text, normal black for actual values */
+#rightbar input[type="text"]::placeholder,
+#rightbar input[type="search"]::placeholder,
+#rightbar textarea::placeholder{
+  color: color-mix(in srgb, var(--text-main) 25%, white) !important;
+}
+
+/* Hide native date placeholder text until a date is selected */
+#rightbar input[type="date"]{
+  color: var(--text-main) !important;
+}
+
+#rightbar input[type="date"]::-webkit-datetime-edit,
+#rightbar input[type="date"]::-webkit-datetime-edit-text,
+#rightbar input[type="date"]::-webkit-datetime-edit-month-field,
+#rightbar input[type="date"]::-webkit-datetime-edit-day-field,
+#rightbar input[type="date"]::-webkit-datetime-edit-year-field{
+  color: transparent;
+}
+
+#rightbar input[type="date"].has-value::-webkit-datetime-edit,
+#rightbar input[type="date"].has-value::-webkit-datetime-edit-text,
+#rightbar input[type="date"].has-value::-webkit-datetime-edit-month-field,
+#rightbar input[type="date"].has-value::-webkit-datetime-edit-day-field,
+#rightbar input[type="date"].has-value::-webkit-datetime-edit-year-field,
+#rightbar input[type="date"]:focus::-webkit-datetime-edit,
+#rightbar input[type="date"]:focus::-webkit-datetime-edit-text,
+#rightbar input[type="date"]:focus::-webkit-datetime-edit-month-field,
+#rightbar input[type="date"]:focus::-webkit-datetime-edit-day-field,
+#rightbar input[type="date"]:focus::-webkit-datetime-edit-year-field{
+  color: var(--text-main);
+}
 
 /* ==============================
    Sidebar collapsed (desktop)
@@ -259,15 +330,28 @@ button{
 
 #sidebar.sidebar-collapsed #chatSearch,
 #sidebar.sidebar-collapsed #projectList,
+#sidebar.sidebar-collapsed #chatList,
 #sidebar.sidebar-collapsed #themeLabel,
 #sidebar.sidebar-collapsed a[href="/logout"]{
   display: none !important;
 }
 
-/* Collapse: hide most text labels and section headers */
+/* Collapse: hide all remaining sidebar text and utility controls */
 #sidebar.sidebar-collapsed .text-xs,
-#sidebar.sidebar-collapsed .text-sm{
+#sidebar.sidebar-collapsed .text-sm,
+#sidebar.sidebar-collapsed .text-\[11px\],
+#sidebar.sidebar-collapsed .font-medium,
+#sidebar.sidebar-collapsed label,
+#sidebar.sidebar-collapsed #newProjectBtn,
+#sidebar.sidebar-collapsed .mt-3,
+#sidebar.sidebar-collapsed .space-y-1,
+#sidebar.sidebar-collapsed .overflow-y-auto{
   display: none !important;
+}
+
+#sidebar.sidebar-collapsed .border-b,
+#sidebar.sidebar-collapsed .border-t{
+  border: 0 !important;
 }
 
 #sidebar.sidebar-collapsed #newChatBtn{
@@ -278,6 +362,13 @@ button{
 /* Harden the hover-only 3-dots visibility */
 .chatMenuBtn{ display: none; }
 .group:hover .chatMenuBtn{ display: inline-flex; }
+
+/* Right sidebar uses shell background */
+#rightbar{
+  background: var(--bg-shell) !important;
+  border: 0 !important;
+  color: var(--text-main);
+}
 
 /* ==============================
    Rightbar collapsed (desktop)
@@ -355,13 +446,16 @@ button{
   background: var(--bg-panel) !important;
   color: var(--text-main) !important;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 #settingsModal select,
 #settingsModal input[type="text"],
-#settingsModal input[type="search"]{
+#settingsModal input[type="search"],
+#settingsModal input[type="date"],
+#settingsModal input[type="number"]{
   background: var(--bg-input) !important;
   color: var(--text-main) !important;
-  border-color: var(--border) !important;
+  border: 0 !important;
+  box-shadow: inset 0 0 0 1px var(--border);
 }

@@ -25,7 +25,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 
 from rag.agent import llm_stream as rag_llm_stream
-from rag.retriever import verify_faiss_dim_matches_embeddings
+from rag.retriever import verify_faiss_dim_matches_embeddings, load_retriever
 from rag.history import build_chat_history
 
 from rag.observability import setup_observability
@@ -101,6 +101,89 @@ def _read_text_best_effort(path: Path, max_chars: int) -> str:
         except Exception:
             return ""
     return ""       # Unsupported types
+
+# --- begin - created 2026-03-29 --- #
+def _retrieve_docs_for_sources(query: str, filters: dict | None = None, k: int = 6) -> list:
+    """Best-effort retrieval for UI source links."""
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    post_title: str | None = None
+    post_tags: list[str] | None = None
+
+    if filters and isinstance(filters, dict):
+        v = filters.get("title")
+        if isinstance(v, str) and v.strip():
+            post_title = v.strip().lower()
+
+        t = filters.get("tags")
+        if isinstance(t, list) and t:
+            post_tags = [str(x).strip() for x in t if str(x).strip()]
+
+    fetch_k = max(k * 50, 200) if (post_title or post_tags) else None
+    retriever = load_retriever(k=k, filters=None, fetch_k=fetch_k)
+    docs = retriever.invoke(q)
+
+    if docs and (post_title or post_tags):
+        filtered = []
+        for d in docs:
+            meta = getattr(d, "metadata", {}) or {}
+
+            if post_title:
+                title = str(meta.get("title", "")).lower()
+                if post_title not in title:
+                    continue
+
+            if post_tags:
+                tags = meta.get("tags")
+                if isinstance(tags, str):
+                    tags_list = [tags]
+                elif isinstance(tags, list):
+                    tags_list = [str(x) for x in tags]
+                else:
+                    tags_list = []
+
+                tags_set = {t.lower() for t in tags_list}
+                if any(t.lower() not in tags_set for t in post_tags):
+                    continue
+
+            filtered.append(d)
+
+        docs = filtered[:k]
+
+    return docs or []
+
+
+
+def _build_sources_payload(docs: list) -> list[dict]:
+    """Convert retrieved docs into a compact UI payload for 'Show sources'."""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+
+    for d in docs or []:
+        meta = getattr(d, "metadata", {}) or {}
+        source = str(meta.get("source") or "").strip()
+        name = str(meta.get("title") or meta.get("name") or (Path(source).name if source else "unknown")).strip()
+        web_url = str(meta.get("webUrl") or "").strip()
+        page_number = meta.get("page_number")
+
+        key = (name, web_url or source, page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        out.append(
+            {
+                "name": name,
+                "webUrl": web_url,
+                "source": source,
+                "page_number": page_number,
+            }
+        )
+
+    return out
+# --- end - created 2026-03-29 --- #
 
 
 # Health checks for ALB
@@ -481,6 +564,16 @@ async def chat_stream(
             trace_id = ""
         meta = json.dumps({"session_id": sid, "trace_id": trace_id, "tools": selected_tools, "filters": doc_filters})
         yield {"event": "meta", "data": meta}
+
+        # --- begin - created 2026-03-29 --- #
+        try:
+            source_docs = _retrieve_docs_for_sources(msg, filters=doc_filters, k=6)
+            sources_payload = _build_sources_payload(source_docs)
+            if sources_payload:
+                yield {"event": "sources", "data": json.dumps(sources_payload)}
+        except Exception as e:
+            log.exception(f"source payload build failed session_id={sid}: {e}")
+        # --- end - created 2026-03-29 --- #
 
         # Attach a per-request sink for middleware/tool steps.
         sink_token = attach_step_sink([])

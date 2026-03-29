@@ -1,4 +1,13 @@
+
 const el = (id) => document.getElementById(id);
+
+function syncDateInputState(root = document) {
+  const dateInputs = root.querySelectorAll('#rightbar input[type="date"]');
+  dateInputs.forEach((input) => {
+    const hasValue = !!input.value;
+    input.classList.toggle('has-value', hasValue);
+  });
+}
 
 const chatListEl = el("chatList");
 const chatTitleEl = el("chatTitle");
@@ -460,18 +469,30 @@ function updateLastAssistantBubble(acc) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// --- Steps panel helpers ---
-function ensureStepsPanel() {
-  // Attach a steps panel under the last assistant bubble (created in sendCurrent)
+// --- Steps + sources panel helpers ---
+function ensureResponsePanelsContainer() {
   const last = messagesEl.lastElementChild;
   const inner = last?.firstElementChild;
   if (!inner) return null;
 
-  let panel = inner.querySelector?.(".stepsPanel");
+  let row = inner.querySelector?.(".responsePanelsRow");
+  if (row) return row;
+
+  row = document.createElement("div");
+  row.className = "responsePanelsRow mt-2 flex flex-wrap gap-2";
+  inner.appendChild(row);
+  return row;
+}
+
+function ensureStepsPanel() {
+  const row = ensureResponsePanelsContainer();
+  if (!row) return null;
+
+  let panel = row.querySelector?.(".stepsPanel");
   if (panel) return panel;
 
   panel = document.createElement("details");
-  panel.className = "stepsPanel mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs";
+  panel.className = "stepsPanel min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs";
 
   const summary = document.createElement("summary");
   summary.className = "cursor-pointer select-none text-slate-700";
@@ -487,7 +508,31 @@ function ensureStepsPanel() {
   panel.appendChild(meta);
   panel.appendChild(list);
 
-  inner.appendChild(panel);
+  row.appendChild(panel);
+  return panel;
+}
+
+function ensureSourcesPanel() {
+  const row = ensureResponsePanelsContainer();
+  if (!row) return null;
+
+  let panel = row.querySelector?.(".sourcesPanel");
+  if (panel) return panel;
+
+  panel = document.createElement("details");
+  panel.className = "sourcesPanel min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs";
+
+  const summary = document.createElement("summary");
+  summary.className = "cursor-pointer select-none text-slate-700";
+  summary.textContent = "Show sources";
+
+  const body = document.createElement("div");
+  body.className = "sourcesBody mt-2 text-slate-800";
+
+  panel.appendChild(summary);
+  panel.appendChild(body);
+
+  row.appendChild(panel);
   return panel;
 }
 
@@ -511,17 +556,8 @@ function renderSteps(steps) {
   list.innerHTML = "";
 
   (steps || []).forEach((s) => {
-    const row = document.createElement("div");
-    row.className = "rounded-md border border-slate-200 bg-white p-2";
-
-    const head = document.createElement("div");
-    head.className = "font-medium text-slate-900";
     const name = s?.name || "";
     const status = s?.status || "";
-    head.textContent = `${s.step_type || "step"}: ${name} — ${status}`;
-
-    const pre = document.createElement("pre");
-    pre.className = "mt-1 whitespace-pre-wrap text-slate-800";
 
     const asText = (v) => {
       if (v == null) return "";
@@ -532,6 +568,27 @@ function renderSteps(steps) {
         return String(v);
       }
     };
+
+    const combinedText = (
+      asText(s?.input) +
+      asText(s?.output) +
+      asText(s?.error)
+    ).trim();
+
+    // Skip uninformative placeholder steps
+    if ((s?.step_type === "step" || !s?.step_type) && !name && !status && !combinedText) {
+      return;
+    }
+
+    const row = document.createElement("div");
+    row.className = "rounded-md border border-slate-200 bg-white p-2";
+
+    const head = document.createElement("div");
+    head.className = "font-medium text-slate-900";
+    head.textContent = `${s.step_type || "step"}: ${name} — ${status}`;
+
+    const pre = document.createElement("pre");
+    pre.className = "mt-1 whitespace-pre-wrap text-slate-800";
 
     if (s.status === "start") {
       const t = asText(s.input);
@@ -547,6 +604,59 @@ function renderSteps(steps) {
     row.appendChild(head);
     if (pre.textContent) row.appendChild(pre);
     list.appendChild(row);
+  });
+}
+
+function renderSources(sources) {
+  const panel = ensureSourcesPanel();
+  if (!panel) return;
+  const body = panel.querySelector(".sourcesBody");
+  if (!body) return;
+
+  body.innerHTML = "";
+
+  const items = Array.isArray(sources) ? sources : [];
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "text-slate-600";
+    empty.textContent = "No sources available.";
+    body.appendChild(empty);
+    return;
+  }
+
+  const title = document.createElement("div");
+  title.className = "mb-2 font-medium text-slate-900";
+  title.textContent = "Sources:";
+  body.appendChild(title);
+
+  const ol = document.createElement("ol");
+  ol.className = "list-decimal pl-5 space-y-1";
+  body.appendChild(ol);
+
+  items.forEach((src) => {
+    const li = document.createElement("li");
+
+    const hasUrl = typeof src?.webUrl === "string" && src.webUrl.trim();
+    const label = String(src?.name || src?.source || "unknown").trim() || "unknown";
+
+    const textNode = hasUrl ? document.createElement("a") : document.createElement("span");
+    textNode.textContent = label;
+
+    if (hasUrl) {
+      textNode.href = src.webUrl;
+      textNode.target = "_blank";
+      textNode.rel = "noopener noreferrer";
+      textNode.className = "underline hover:no-underline";
+    }
+
+    li.appendChild(textNode);
+
+    const pageNumber = src?.page_number;
+    if (pageNumber !== null && pageNumber !== undefined && pageNumber !== "") {
+      li.appendChild(document.createTextNode(` - slide ${pageNumber}`));
+    }
+
+    ol.appendChild(li);
   });
 }
 
@@ -656,6 +766,7 @@ function streamAnswer(userText, fileIds = []) {
 
   let acc = "";
   let steps = [];
+  let sources = [];
   let traceId = "";
 
   es.addEventListener("error", () => {
@@ -669,6 +780,7 @@ function streamAnswer(userText, fileIds = []) {
     updateLastAssistantBubble(acc);
   });
 
+
   es.addEventListener("meta", (evt) => {
     try {
       const obj = JSON.parse(evt.data || "{}");
@@ -676,6 +788,15 @@ function streamAnswer(userText, fileIds = []) {
       setStepsMeta(traceId);
     } catch {
       // ignore
+    }
+  });
+
+  es.addEventListener("sources", (evt) => {
+    try {
+      sources = JSON.parse(evt.data || "[]");
+      renderSources(sources);
+    } catch {
+      // ignore malformed sources
     }
   });
 
@@ -1349,6 +1470,18 @@ function initSettingsModal() {
     applyCustomColors(DEFAULT_ACCENT, DEFAULT_TOGGLE_BG, DEFAULT_CHAT_BG);
   });
 
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.matches('#rightbar input[type="date"]')) {
+      syncDateInputState();
+    }
+  });
+
+  document.addEventListener("input", (e) => {
+    if (e.target && e.target.matches('#rightbar input[type="date"]')) {
+      syncDateInputState();
+    }
+  });
+
   // Models
   // Load saved model selection immediately (options may be populated later).
   const savedModel = (() => { try { return localStorage.getItem(LS_MODEL) || ""; } catch { return ""; } })();
@@ -1370,6 +1503,7 @@ function initSettingsModal() {
   initSidebarControls();
   initRightbarControls();
   initSettingsModal();
+  syncDateInputState();
   renderProjects();
   await loadSessions();
 })();
