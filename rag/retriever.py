@@ -6,6 +6,7 @@ retriever.py is now:
 """
 
 from pathlib import Path
+from collections import defaultdict
 from typing import Iterable
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -15,12 +16,12 @@ from langchain_community.vectorstores import FAISS
 # from langchain_community.embeddings import OllamaEmbeddings
 from langchain_ollama import OllamaEmbeddings
 from langchain_aws import BedrockEmbeddings
-from langchain_community.document_loaders import (DirectoryLoader,TextLoader,UnstructuredFileLoader)
+from langchain_community.document_loaders import (DirectoryLoader,TextLoader,UnstructuredFileLoader,UnstructuredPowerPointLoader)
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_community.document_loaders.excel import UnstructuredExcelLoader
 from langchain_community.document_loaders.email import (UnstructuredEmailLoader,OutlookMessageLoader,)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from langchain_core.documents import Document
 from typing import Any
 import re
 from datetime import datetime
@@ -28,6 +29,42 @@ try:
     import yaml
 except Exception:
     yaml = None
+
+def load_pptx_as_slides(path: str) -> list:
+    """Load a PowerPoint and return one LangChain Document per slide."""
+    loader = UnstructuredPowerPointLoader(str(path), mode="elements")
+    elements = loader.load()
+
+    slides: dict[int, list] = defaultdict(list)
+    slide_meta: dict[int, dict[str, Any]] = {}
+
+    for element in elements:
+        page_number = element.metadata.get("page_number")
+        if page_number is None:
+            page_number = 1
+
+        text = (element.page_content or "").strip()
+        if text:
+            slides[page_number].append(text)
+
+        if page_number not in slide_meta:
+            base_meta = dict(element.metadata or {})
+            base_meta["source"] = str(path)
+            base_meta["page_number"] = page_number
+            slide_meta[page_number] = base_meta
+
+    out = []
+    for page_number in sorted(slides):
+        content = "\n\n".join(slides[page_number]).strip()
+        if not content:
+            continue
+        out.append(
+            Document(
+                page_content=content,
+                metadata=slide_meta.get(page_number, {"source": str(path), "page_number": page_number}),
+            )
+        )
+    return out
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -71,7 +108,6 @@ def _normalize_metadata(meta: dict[str, Any], body: str) -> dict[str, Any]:
         out["tags"] = [str(t) for t in tags]
     elif isinstance(tags, str):
         out["tags"] = [tags]
-
     return out
 
 # Simple loader registry by extension
@@ -82,8 +118,8 @@ EXT_TO_LOADER = {
     ".html": UnstructuredFileLoader,
     ".pdf": UnstructuredFileLoader,
     ".docx": UnstructuredFileLoader,
-    ".ppt": UnstructuredFileLoader,
-    ".pptx": UnstructuredFileLoader,
+    ".ppt": UnstructuredPowerPointLoader, # UnstructuredFileLoader,
+    ".pptx": UnstructuredPowerPointLoader, # UnstructuredFileLoader,
     ".csv": CSVLoader,
     ".xls": UnstructuredExcelLoader,
     ".xlsx": UnstructuredExcelLoader,
@@ -118,16 +154,23 @@ def _load_documents(input_dir: Path) -> list:
     dropped_count = 0
     error_count = 0
     for ext, Loader in EXT_TO_LOADER.items():
-        loader = DirectoryLoader(
-            str(input_dir),
-            glob=f"**/*{ext}",  # recursively search for all files with this extension
-            loader_cls=Loader,  # TextLoader, UnstructuredFileLoader, etc.
-            show_progress=True,
-        )
         try:
-            loaded = loader.load()
-            loaded_count += len(loaded)
-            docs.extend(loaded)
+            if ext in {".ppt", ".pptx"}:
+                for path in sorted(input_dir.rglob(f"*{ext}")):
+                    loaded = load_pptx_as_slides(path)
+                    loaded_count += len(loaded)
+                    docs.extend(loaded)
+            else:
+                loader = DirectoryLoader(
+                    str(input_dir),
+                    glob=f"**/*{ext}",  # recursively search for all files with this extension
+                    loader_cls=Loader,  # TextLoader, UnstructuredFileLoader, etc.
+                    show_progress=True,
+                )
+                loaded = loader.load()
+                loaded_count += len(loaded)
+                docs.extend(loaded)
+
             # Drop empty documents (no text extracted)
             for d in list(docs):
                 if not getattr(d, "page_content", "").strip():
@@ -190,7 +233,18 @@ def build_index(docs_dir: Path | None = None, max_docs: int | None = None) -> No
         chunk_size=cfg.chunk_size,
         chunk_overlap=cfg.chunk_overlap,
     )
-    chunks = splitter.split_documents(docs)
+    ppt_docs = []
+    other_docs = []
+    for d in docs:
+        source = str((d.metadata or {}).get("source", "")).lower()
+        if source.endswith(".ppt") or source.endswith(".pptx"):
+            ppt_docs.append(d)
+        else:
+            other_docs.append(d)
+
+    chunks = list(ppt_docs)
+    if other_docs:
+        chunks.extend(splitter.split_documents(other_docs))
     embeddings = _get_embeddings()     # old was OpenAIEmbeddings(model=cfg.embedding_model)
     vs = FAISS.from_documents(chunks, embeddings)  # FAISS for now
     vs.save_local(str(cfg.faiss_dir))
