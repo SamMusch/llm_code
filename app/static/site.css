@@ -18,6 +18,7 @@
   --chat-bg: var(--br-white);
 
   --primary: var(--accent);
+  --primary-contrast: #fff;
   --primaryHover: #178bb6;
   --ring: color-mix(in srgb, var(--accent) 25%, transparent);
 
@@ -25,9 +26,16 @@
   --bg-page: var(--br-light-gray);
   --bg-panel: var(--br-white);
   --bg-sidebar: var(--br-white);
+  --bg-input: var(--br-white);
+  --bg-subtle: var(--br-light-blue);
   --border: rgba(0, 0, 0, 0.12);
   --text-main: var(--br-black);
   --text-muted: var(--br-dark-gray);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --radius-sm: 1rem;
+  --radius-md: 1.5rem;
+  --radius-lg: 2rem;
 }
 
 @import url("https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap");
@@ -36,6 +44,15 @@ html[data-theme="blue"]{
 }
 html[data-theme="emerald"]{
   --accent: #059669;
+}
+
+/* Fallback contrast override when color-contrast() is unavailable.
+   Keep dark accents white by default; force black text for the current light default accent. */
+html[style*="--accent: #bfbfbf"],
+html[style*="--accent:#bfbfbf"],
+html[style*="--accent: #BFBFBF"],
+html[style*="--accent:#BFBFBF"]{
+  --primary-contrast: #000;
 }
 
 /* ==============================
@@ -58,9 +75,13 @@ html[data-mode="dark"]{
   --bg-page: #0b1220;
   --bg-panel: #0f172a;
   --bg-sidebar: #020617;
+  --bg-input: #111827;
   --border: #1e293b;
   --text-main: #e5e7eb;
   --text-muted: #94a3b8;
+  --bg-subtle: #0b2940;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
   --chat-bg: #0f172a;
 }
 
@@ -99,18 +120,21 @@ aside[aria-label="Sidebar"]{
   background: var(--bg-sidebar) !important;
   color: var(--text-main);
   border-color: var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 header, footer{
   background: var(--bg-panel) !important;
   border-color: var(--border) !important;
   color: var(--text-main);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Chat surface */
 #chatMessages{
   background: var(--bg-chat);
-  border-radius: 1.5rem;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 /* Assistant bubbles */
@@ -118,7 +142,8 @@ header, footer{
   background: var(--bg-panel) !important;
   color: var(--text-main) !important;
   border-color: var(--border) !important;
-  border-radius: 1.5rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Borders + muted text */
@@ -131,22 +156,32 @@ body.full-bleed { overflow: hidden; }
 /* Primary button helper (used in app.html) */
 .btn-primary{
   background: var(--primary);
-  color: #fff;
-  border-radius: 1.5rem;
+  color: var(--primary-contrast);
+  color: color-contrast(var(--primary) vs #000, #fff);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 .btn-primary:hover{ background: var(--primaryHover); }
 .btn-primary:focus-visible{ box-shadow: 0 0 0 4px var(--ring); }
+.btn-primary:active{ transform: translateY(1px); }
 
 /* State helpers used by app.js */
 .chatitem-active{
   background: var(--primary) !important;
   border-color: var(--primary) !important;
-  color: #fff !important;
+  color: var(--primary-contrast) !important;
+  color: color-contrast(var(--primary) vs #000, #fff) !important;
 }
 .bubble-user{
   background: var(--primary) !important;
   border-color: var(--primary) !important;
-  color: #fff !important;
+  color: var(--primary-contrast) !important;
+  color: color-contrast(var(--primary) vs #000, #fff) !important;
+}
+.chatitem-active,
+.bubble-user,
+.btn-primary{
+  transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 /* Ensure the chat area can scroll within the viewport */
@@ -157,7 +192,52 @@ body.full-bleed { overflow: hidden; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: inherit;
 }
+#chatMessages pre,
+#chatMessages code,
+#settingsModal code{
+  border-radius: var(--radius-sm);
+}
 
+
+/* ==============================
+   input,
+   textarea,
+   select,
+   button{
+  font: inherit;
+}
+
+input[type="text"],
+input[type="search"],
+textarea,
+select{
+  background: var(--bg-input) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: none;
+}
+
+input[type="text"]::placeholder,
+input[type="search"]::placeholder,
+textarea::placeholder{
+  color: var(--text-muted) !important;
+}
+
+input[type="text"]:focus,
+input[type="search"]:focus,
+textarea:focus,
+select:focus{
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 4px var(--ring);
+}
+
+a,
+button{
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+   ============================== */
 
 /* ==============================
    Sidebar collapsed (desktop)
@@ -208,6 +288,14 @@ body.full-bleed { overflow: hidden; }
   width: 64px !important;
   min-width: 64px !important;
   max-width: 64px !important;
+  flex: 0 0 64px !important;
+  flex-basis: 64px !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+#rightbar.rightbar-collapsed *{
+  box-sizing: border-box;
 }
 
 #rightbar.rightbar-collapsed .px-4,
@@ -221,11 +309,33 @@ body.full-bleed { overflow: hidden; }
 /* Collapse: hide everything except the header */
 #rightbar.rightbar-collapsed > :not(#rightbarHeader){
   display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  overflow: hidden !important;
 }
 
 /* In collapsed state, hide the title text so the rail stays clean */
-#rightbar.rightbar-collapsed #rightbarTitle{
+#rightbar.rightbar-collapsed #rightbarTitle,
+#rightbar.rightbar-collapsed #rightbarHeader .text-xs,
+#rightbar.rightbar-collapsed #rightbarHeader > .flex.items-center.gap-3{
   display: none !important;
+}
+
+#rightbar.rightbar-collapsed #rightbarHeader{
+  width: 64px !important;
+  min-width: 64px !important;
+  max-width: 64px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+#rightbar.rightbar-collapsed #rightbarClose,
+#rightbar.rightbar-collapsed #rightbarToggleDesktop{
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
 
 /* ==============================
@@ -244,12 +354,14 @@ body.full-bleed { overflow: hidden; }
 #settingsModal .bg-white{
   background: var(--bg-panel) !important;
   color: var(--text-main) !important;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 
 #settingsModal select,
 #settingsModal input[type="text"],
 #settingsModal input[type="search"]{
-  background: var(--bg-panel) !important;
+  background: var(--bg-input) !important;
   color: var(--text-main) !important;
   border-color: var(--border) !important;
 }

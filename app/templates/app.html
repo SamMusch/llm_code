@@ -1,67 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="flex h-full w-full overflow-hidden">
+<div class="app-shell flex h-full w-full overflow-hidden">
   <!-- Mobile top bar (hamburger) -->
-  <div class="md:hidden fixed top-0 left-0 right-0 z-20 flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
-    <button id="sidebarToggle" type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Open sidebar">
-      <!-- hamburger -->
-      <span class="block h-[2px] w-5 bg-slate-900"></span>
-      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
-      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
+  <div class="md:hidden fixed top-0 left-0 right-0 z-20 flex items-center gap-2 border-b px-3 py-3 backdrop-blur" style="background: var(--bg-panel); border-color: var(--border);">
+    <button id="sidebarToggle" type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Open sidebar">
+      <span class="block h-[2px] w-5" style="background: var(--text-main);"></span>
+      <span class="mt-1 block h-[2px] w-5" style="background: var(--text-main);"></span>
+      <span class="mt-1 block h-[2px] w-5" style="background: var(--text-main);"></span>
     </button>
     <div class="min-w-0 flex-1">
-      <div class="truncate text-sm font-semibold" id="mobileTitle">Chat</div>
+      <div class="truncate text-sm font-semibold" id="mobileTitle" style="color: var(--text-main);">llm_code</div>
     </div>
-    <button id="rightbarToggle" type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Open tools panel">
-      <!-- hamburger -->
-      <span class="block h-[2px] w-5 bg-slate-900"></span>
-      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
-      <span class="mt-1 block h-[2px] w-5 bg-slate-900"></span>
+    <button id="rightbarToggle" type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Open tools panel">
+      <span class="block h-[2px] w-5" style="background: var(--text-main);"></span>
+      <span class="mt-1 block h-[2px] w-5" style="background: var(--text-main);"></span>
+      <span class="mt-1 block h-[2px] w-5" style="background: var(--text-main);"></span>
     </button>
   </div>
 
   <!-- Sidebar -->
-  <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 hidden w-[22vw] min-w-[260px] max-w-[360px] flex-col border-r border-slate-200 bg-white md:static md:flex" aria-label="Sidebar">
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 hidden w-[22vw] min-w-[280px] max-w-[360px] flex-col border-r md:static md:flex" style="background: var(--bg-sidebar); border-color: var(--border);" aria-label="Sidebar">
     <!-- Sidebar header -->
-    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-      <div class="text-sm font-semibold">Controls</div>
-      <button id="sidebarClose" type="button" class="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Close sidebar">×</button>
+    <div class="flex items-center justify-between border-b px-4 py-4" style="border-color: var(--border);">
+      <div>
+        <div class="text-sm font-semibold" style="color: var(--text-main);">Workspace</div>
+        <div class="mt-0.5 text-xs" style="color: var(--text-muted);">Chats and projects</div>
+      </div>
+      <button id="sidebarClose" type="button" class="md:hidden inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Close sidebar">×</button>
     </div>
 
     <!-- Section 1: Controls -->
-    <div class="px-4 py-3 border-b border-slate-200">
-      <button id="newChatBtn" class="w-full inline-flex items-center justify-center rounded-lg btn-primary px-4 py-2 text-sm font-medium focus:outline-none">
+    <div class="px-4 py-4 border-b" style="border-color: var(--border);">
+      <button id="newChatBtn" class="w-full inline-flex items-center justify-center btn-primary px-4 py-3 text-sm font-medium focus:outline-none">
         New chat
       </button>
-      <div class="mt-2">
-        <input id="chatSearch" type="search" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="Search chats" />
+      <div class="mt-3">
+        <input id="chatSearch" type="search" class="w-full px-3 py-2.5 text-sm focus:outline-none" placeholder="Search chats" />
       </div>
     </div>
 
     <!-- Section 2: Projects -->
-    <div class="px-4 py-3 border-b border-slate-200">
+    <div class="px-4 py-4 border-b" style="border-color: var(--border);">
       <div class="flex items-center justify-between">
-        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Projects</div>
-        <button id="newProjectBtn" type="button" class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium hover:bg-slate-50">New</button>
+        <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Projects</div>
+        <button id="newProjectBtn" type="button" class="rounded-2xl border px-3 py-1.5 text-xs font-medium" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);">New</button>
       </div>
-      <div id="projectList" class="mt-2 space-y-1" aria-label="Projects"></div>
+      <div id="projectList" class="mt-3 space-y-1" aria-label="Projects"></div>
     </div>
 
     <!-- Section 3: Conversations -->
     <div class="flex-1 overflow-hidden">
-      <div class="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Conversations</div>
+      <div class="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Conversations</div>
       <div class="h-full overflow-y-auto px-2 pb-4">
         <div id="chatList" class="space-y-1" aria-label="Chats"></div>
       </div>
     </div>
 
     <!-- Section 4: Settings -->
-    <div class="mt-auto border-t border-slate-200 p-3">
-      <button id="settingsModalBtn" type="button" class="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50">
+    <div class="mt-auto border-t p-3" style="border-color: var(--border);">
+      <button id="settingsModalBtn" type="button" class="w-full flex items-center justify-between rounded-2xl border px-3 py-3 text-sm" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);">
         <span class="font-medium">Settings</span>
-        <span id="themeLabel" class="text-xs text-slate-500">Slate</span>
+        <span id="themeLabel" class="text-xs" style="color: var(--text-muted);">Theme</span>
       </button>
-      <a class="mt-2 w-full inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50" href="/app/logout">Logout</a>
+      <a class="mt-2 w-full inline-flex items-center justify-center rounded-2xl border px-4 py-3 text-sm font-medium" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" href="/app/logout">Logout</a>
     </div>
   </aside>
 
@@ -70,36 +71,39 @@
   <div id="rightbarBackdrop" class="fixed inset-0 z-20 hidden bg-black/30 md:hidden" aria-hidden="true"></div>
 
   <!-- Main -->
-  <main class="flex min-w-0 flex-1 flex-col bg-slate-50 pt-12 md:pt-0" aria-label="Chat">
+  <main class="flex min-w-0 flex-1 flex-col pt-12 md:pt-0" style="background: var(--bg-page);" aria-label="Chat">
     <!-- Header -->
-    <header class="sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur">
-      <div class="flex items-center justify-between px-4 py-3">
+    <header class="sticky top-0 z-10 border-b backdrop-blur" style="background: color-mix(in srgb, var(--bg-panel) 88%, transparent); border-color: var(--border);">
+      <div class="flex items-center justify-between px-4 py-4">
         <div class="flex items-center gap-3">
-          <button id="sidebarToggleDesktop" type="button" class="hidden md:inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Toggle sidebar">☰</button>
+          <button id="sidebarToggleDesktop" type="button" class="hidden md:inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Toggle sidebar">☰</button>
+          <div>
+            <div class="text-sm font-semibold" style="color: var(--text-main);">Chat</div>
+            <div class="text-xs" style="color: var(--text-muted);">RAG workspace</div>
+          </div>
         </div>
         <div class="flex items-center gap-3">
-          <button id="rightbarToggleDesktop" type="button" class="hidden md:inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Toggle tools panel">☰</button>
+          <button id="rightbarToggleDesktop" type="button" class="hidden md:inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Toggle tools panel">☰</button>
         </div>
       </div>
     </header>
 
     <!-- Thread -->
-    <section class="flex-1 overflow-y-auto" aria-label="Messages">
-      <div id="chatMessages" class="mx-auto w-full max-w-3xl px-4 py-6 space-y-4"></div>
+    <section class="flex-1 overflow-y-auto px-3 py-3 md:px-5 md:py-5" aria-label="Messages">
+      <div id="chatMessages" class="mx-auto w-full max-w-4xl px-4 py-6 space-y-4"></div>
     </section>
 
     <!-- Composer -->
-    <footer class="border-t border-slate-200 bg-white">
-      <div class="mx-auto w-full max-w-3xl px-4 py-3">
-        <!-- Attachments (shows selected/uploaded files) -->
-        <div id="attachmentStrip" class="mb-2 hidden flex flex-wrap gap-2" aria-label="Attachments"></div>
+    <footer class="border-t" style="background: var(--bg-panel); border-color: var(--border);">
+      <div class="mx-auto w-full max-w-4xl px-4 py-4">
+        <div id="attachmentStrip" class="mb-3 hidden flex flex-wrap gap-2" aria-label="Attachments"></div>
 
-        <div class="flex items-end gap-2">
-          <!-- Attach button (ChatGPT-style plus) -->
+        <div class="flex items-end gap-2 rounded-[2rem] border p-2" style="background: var(--bg-panel); border-color: var(--border); box-shadow: var(--shadow-sm);">
           <button
             id="attachBtn"
             type="button"
-            class="inline-flex h-[44px] w-[44px] items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 focus:outline-none"
+            class="inline-flex h-[44px] w-[44px] items-center justify-center rounded-2xl border text-lg leading-none focus:outline-none"
+            style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);"
             aria-label="Attach files"
             title="Attach files"
           >
@@ -115,33 +119,37 @@
 
           <textarea
             id="chatInput"
-            class="min-h-[44px] w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-4 focus:ring-slate-100"
+            class="min-h-[44px] w-full resize-none border-0 bg-transparent px-3 py-2.5 text-sm focus:outline-none focus:ring-0"
+            style="color: var(--text-main);"
             rows="1"
             placeholder="Message..."
             aria-label="Message"
           ></textarea>
-          <button id="sendBtn" class="inline-flex h-[44px] items-center justify-center rounded-lg btn-primary px-4 text-sm font-medium focus:outline-none">
+          <button id="sendBtn" class="inline-flex h-[44px] items-center justify-center btn-primary px-5 text-sm font-medium focus:outline-none">
             Send
           </button>
         </div>
-        <div class="mt-2 text-xs text-slate-500">Shift+Enter for newline • Enter to send</div>
+        <div class="mt-2 text-xs" style="color: var(--text-muted);">Shift+Enter for newline • Enter to send</div>
       </div>
     </footer>
   </main>
 
   <!-- Right sidebar (Tools) -->
-  <aside id="rightbar" class="fixed inset-y-0 right-0 z-30 hidden w-[22vw] min-w-[260px] max-w-[360px] flex-col border-l border-slate-200 bg-white md:static md:flex" aria-label="Tools panel" data-collapsed="false">
+  <aside id="rightbar" class="fixed inset-y-0 right-0 z-30 hidden w-[22vw] min-w-[280px] max-w-[360px] flex-col border-l md:static md:flex" style="background: var(--bg-sidebar); border-color: var(--border);" aria-label="Tools panel" data-collapsed="false">
     <!-- Right sidebar header -->
-    <div id="rightbarHeader" class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+    <div id="rightbarHeader" class="flex items-center justify-between border-b px-4 py-4" style="border-color: var(--border);">
       <div class="flex items-center gap-3">
-        <div id="rightbarTitle" class="text-sm font-semibold">Tools</div>
+        <div>
+          <div id="rightbarTitle" class="text-sm font-semibold" style="color: var(--text-main);">Tools</div>
+          <div class="text-xs" style="color: var(--text-muted);">Filters and connectors</div>
+        </div>
       </div>
-      <button id="rightbarClose" type="button" class="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" aria-label="Close tools panel">×</button>
+      <button id="rightbarClose" type="button" class="md:hidden inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" aria-label="Close tools panel">×</button>
     </div>
 
     <!-- Section 1: Tools -->
-    <div class="px-4 py-3 border-b border-slate-200">
-      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tools</div>
+    <div class="px-4 py-4 border-b" style="border-color: var(--border);">
+      <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Tools</div>
       <div class="mt-3 space-y-2">
         <label class="flex items-center gap-2 text-sm">
           <input id="toolDb" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
@@ -152,58 +160,58 @@
           <span>Placeholder</span>
         </label>
       </div>
-      <div class="mt-3 text-xs text-slate-500">Selecting Database enables Postgres-backed tools.</div>
+      <div class="mt-3 text-xs" style="color: var(--text-muted);">Selecting Database enables Postgres-backed tools.</div>
     </div>
 
     <!-- Section 3: Metadata filters -->
-    <div class="px-4 py-3 border-b border-slate-200">
-      <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Metadata</div>
+    <div class="px-4 py-4 border-b" style="border-color: var(--border);">
+      <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Metadata</div>
 
       <div class="mt-3 space-y-3">
         <div>
-          <label for="metaTitle" class="block text-xs font-medium text-slate-600">Title contains</label>
-          <input id="metaTitle" type="text" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="e.g., projects" />
+          <label for="metaTitle" class="block text-xs font-medium" style="color: var(--text-muted);">Title contains</label>
+          <input id="metaTitle" type="text" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" placeholder="e.g., projects" />
         </div>
 
         <div>
-          <label for="metaTags" class="block text-xs font-medium text-slate-600">Tags (comma-separated)</label>
-          <input id="metaTags" type="text" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="e.g., client_acme, sales" />
+          <label for="metaTags" class="block text-xs font-medium" style="color: var(--text-muted);">Tags (comma-separated)</label>
+          <input id="metaTags" type="text" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" placeholder="e.g., client_acme, sales" />
         </div>
 
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label for="metaWordMin" class="block text-xs font-medium text-slate-600">Min words</label>
-            <input id="metaWordMin" type="number" min="0" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="0" />
+            <label for="metaWordMin" class="block text-xs font-medium" style="color: var(--text-muted);">Min words</label>
+            <input id="metaWordMin" type="number" min="0" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" placeholder="0" />
           </div>
           <div>
-            <label for="metaWordMax" class="block text-xs font-medium text-slate-600">Max words</label>
-            <input id="metaWordMax" type="number" min="0" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none" placeholder="" />
-          </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label for="metaCreatedFrom" class="block text-xs font-medium text-slate-600">Created from</label>
-            <input id="metaCreatedFrom" type="date" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label for="metaCreatedTo" class="block text-xs font-medium text-slate-600">Created to</label>
-            <input id="metaCreatedTo" type="date" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none" />
+            <label for="metaWordMax" class="block text-xs font-medium" style="color: var(--text-muted);">Max words</label>
+            <input id="metaWordMax" type="number" min="0" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" placeholder="" />
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label for="metaModifiedFrom" class="block text-xs font-medium text-slate-600">Modified from</label>
-            <input id="metaModifiedFrom" type="date" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none" />
+            <label for="metaCreatedFrom" class="block text-xs font-medium" style="color: var(--text-muted);">Created from</label>
+            <input id="metaCreatedFrom" type="date" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" />
           </div>
           <div>
-            <label for="metaModifiedTo" class="block text-xs font-medium text-slate-600">Modified to</label>
-            <input id="metaModifiedTo" type="date" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none" />
+            <label for="metaCreatedTo" class="block text-xs font-medium" style="color: var(--text-muted);">Created to</label>
+            <input id="metaCreatedTo" type="date" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" />
           </div>
         </div>
 
-        <div class="mt-1 text-xs text-slate-500">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label for="metaModifiedFrom" class="block text-xs font-medium" style="color: var(--text-muted);">Modified from</label>
+            <input id="metaModifiedFrom" type="date" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label for="metaModifiedTo" class="block text-xs font-medium" style="color: var(--text-muted);">Modified to</label>
+            <input id="metaModifiedTo" type="date" class="mt-1 w-full px-3 py-2 text-sm focus:outline-none" />
+          </div>
+        </div>
+
+        <div class="mt-1 text-xs" style="color: var(--text-muted);">
           These filters are applied deterministically to doc chunks at retrieval time.
         </div>
       </div>
@@ -217,44 +225,56 @@
 <!-- Settings modal (HTML scaffold; behavior wired in app.js) -->
 <div id="settingsModal" class="fixed inset-0 z-40 hidden" aria-hidden="true">
   <div class="absolute inset-0 bg-black/30" data-close="settings"></div>
-  <div class="absolute left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-xl">
-    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-      <div class="text-sm font-semibold">Settings</div>
-      <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50" data-close="settings" aria-label="Close">×</button>
+  <div class="absolute left-1/2 top-1/2 w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main); box-shadow: var(--shadow-md);">
+    <div class="flex items-center justify-between border-b px-4 py-4" style="border-color: var(--border);">
+      <div class="text-sm font-semibold" style="color: var(--text-main);">Settings</div>
+      <button type="button" class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);" data-close="settings" aria-label="Close">×</button>
     </div>
 
-    <div class="max-h-[70vh] overflow-y-auto p-4 space-y-6 text-slate-900">
+    <div class="max-h-[70vh] overflow-y-auto p-5 space-y-6" style="color: var(--text-main);">
       <!-- Sub-section 1: Models -->
       <div>
-        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Models</div>
-        <select id="modelSelect" class="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+        <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Models</div>
+        <select id="modelSelect" class="mt-2 w-full px-3 py-2 text-sm">
           <option value="default">Default</option>
         </select>
       </div>
 
       <!-- Sub-section 2: Preferences -->
       <div>
-        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Preferences</div>
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Preferences</div>
+          <button id="restoreDefaultsBtn" type="button" class="inline-flex items-center justify-center rounded-2xl border px-3 py-1.5 text-sm italic" style="background: var(--bg-panel); border-color: var(--border); color: color-mix(in srgb, var(--text-main) 70%, transparent);">Restore to defaults</button>
+        </div>
         <div class="mt-3 grid grid-cols-1 gap-3">
           <div class="flex items-center justify-between gap-3">
             <div class="text-sm">Accent</div>
-            <input id="accentPicker" type="color" value="#a281ee" />
+            <div class="flex items-center gap-2">
+              <input id="accentHex" type="text" value="#bfbfbf" class="w-28 px-3 py-2 text-sm focus:outline-none" placeholder="#000000" inputmode="text" autocomplete="off" spellcheck="false" />
+              <input id="accentPicker" type="color" value="#bfbfbf" />
+            </div>
           </div>
           <div class="flex items-center justify-between gap-3">
             <div class="text-sm">Toggle background</div>
-            <input id="toggleBgPicker" type="color" value="#eef5ff" />
+            <div class="flex items-center gap-2">
+              <input id="toggleBgHex" type="text" value="#ECECEC" class="w-28 px-3 py-2 text-sm focus:outline-none" placeholder="#000000" inputmode="text" autocomplete="off" spellcheck="false" />
+              <input id="toggleBgPicker" type="color" value="#ECECEC" />
+            </div>
           </div>
           <div class="flex items-center justify-between gap-3">
             <div class="text-sm">Chat background</div>
-            <input id="chatBgPicker" type="color" value="#ffffff" />
+            <div class="flex items-center gap-2">
+              <input id="chatBgHex" type="text" value="#ffffff" class="w-28 px-3 py-2 text-sm focus:outline-none" placeholder="#000000" inputmode="text" autocomplete="off" spellcheck="false" />
+              <input id="chatBgPicker" type="color" value="#ffffff" />
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Sub-section 3: Tasks -->
       <div>
-        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tasks</div>
-        <button id="scheduleTaskBtn" type="button" class="mt-2 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50">Schedule a task</button>
+        <div class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--text-muted);">Tasks</div>
+        <button id="scheduleTaskBtn" type="button" class="mt-2 inline-flex items-center justify-center rounded-2xl border px-3 py-2 text-sm" style="background: var(--bg-panel); border-color: var(--border); color: var(--text-main);">Schedule a task</button>
         <div id="taskList" class="mt-3 space-y-2"></div>
       </div>
     </div>

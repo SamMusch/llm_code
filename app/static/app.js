@@ -53,9 +53,13 @@ const projectListEl = el("projectList");
 const settingsModalBtn = el("settingsModalBtn");
 const settingsModalEl = el("settingsModal");
 const modelSelectEl = el("modelSelect");
+const accentHexEl = el("accentHex");
 const accentPickerEl = el("accentPicker");
+const toggleBgHexEl = el("toggleBgHex");
 const toggleBgPickerEl = el("toggleBgPicker");
+const chatBgHexEl = el("chatBgHex");
 const chatBgPickerEl = el("chatBgPicker");
+const restoreDefaultsBtnEl = el("restoreDefaultsBtn");
 const scheduleTaskBtnEl = el("scheduleTaskBtn");
 const taskListEl = el("taskList");
 
@@ -71,6 +75,10 @@ const LS_BG = "llm_code_bg";                  // legacy: matching|gray
 const LS_ACCENT = "llm_code_accent_hex";      // e.g. #a281ee
 const LS_TOGGLE_BG = "llm_code_toggle_bg_hex";// e.g. #eef5ff
 const LS_CHAT_BG = "llm_code_chat_bg_hex";    // e.g. #ffffff
+
+const DEFAULT_ACCENT = "#bfbfbf";
+const DEFAULT_TOGGLE_BG = "#ECECEC";
+const DEFAULT_CHAT_BG = "#FFFFFF";
 
 const LS_MODEL = "llm_code_model";           // selected model name
 
@@ -1058,17 +1066,20 @@ function setRightbarCollapsed(collapsed) {
     rightbarEl.dataset._prevWidth = rightbarEl.style.width || "";
     rightbarEl.dataset._prevMinWidth = rightbarEl.style.minWidth || "";
     rightbarEl.dataset._prevMaxWidth = rightbarEl.style.maxWidth || "";
+    rightbarEl.dataset._prevFlex = rightbarEl.style.flex || "";
+    rightbarEl.dataset._prevFlexBasis = rightbarEl.style.flexBasis || "";
     rightbarEl.dataset._prevPadding = rightbarEl.style.padding || "";
     rightbarEl.dataset._prevBorderWidth = rightbarEl.style.borderWidth || "";
     rightbarEl.dataset._prevOverflow = rightbarEl.style.overflow || "";
 
-    // Collapse to a narrow rail (desktop)
-    rightbarEl.style.width = "56px";
-    rightbarEl.style.minWidth = "56px";
-    rightbarEl.style.maxWidth = "56px";
+    // Collapse fully on desktop; the header toggle button outside the sidebar remains visible.
+    rightbarEl.style.width = "0";
+    rightbarEl.style.minWidth = "0";
+    rightbarEl.style.maxWidth = "0";
+    rightbarEl.style.flex = "0 0 0";
+    rightbarEl.style.flexBasis = "0";
     rightbarEl.style.padding = "0";
-    // keep the border so the rail is visible
-    rightbarEl.style.borderWidth = rightbarEl.dataset._prevBorderWidth || "";
+    rightbarEl.style.borderWidth = "0";
     rightbarEl.style.overflow = "hidden";
 
     // Ensure the desktop toggle stays visible/clickable
@@ -1086,6 +1097,8 @@ function setRightbarCollapsed(collapsed) {
     rightbarEl.style.width = rightbarEl.dataset._prevWidth || "";
     rightbarEl.style.minWidth = rightbarEl.dataset._prevMinWidth || "";
     rightbarEl.style.maxWidth = rightbarEl.dataset._prevMaxWidth || "";
+    rightbarEl.style.flex = rightbarEl.dataset._prevFlex || "";
+    rightbarEl.style.flexBasis = rightbarEl.dataset._prevFlexBasis || "";
     rightbarEl.style.padding = rightbarEl.dataset._prevPadding || "";
     rightbarEl.style.borderWidth = rightbarEl.dataset._prevBorderWidth || "";
     rightbarEl.style.overflow = rightbarEl.dataset._prevOverflow || "";
@@ -1093,6 +1106,8 @@ function setRightbarCollapsed(collapsed) {
     delete rightbarEl.dataset._prevWidth;
     delete rightbarEl.dataset._prevMinWidth;
     delete rightbarEl.dataset._prevMaxWidth;
+    delete rightbarEl.dataset._prevFlex;
+    delete rightbarEl.dataset._prevFlexBasis;
     delete rightbarEl.dataset._prevPadding;
     delete rightbarEl.dataset._prevBorderWidth;
     delete rightbarEl.dataset._prevOverflow;
@@ -1201,6 +1216,38 @@ function closeSettingsModal() {
   settingsModalEl.setAttribute("aria-hidden", "true");
 }
 
+
+function normalizeHexColor(value, fallback) {
+  const raw = String(value || "").trim();
+  const withHash = raw.startsWith("#") ? raw : `#${raw}`;
+  if (/^#[0-9a-fA-F]{6}$/.test(withHash)) return withHash.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(withHash)) {
+    return `#${withHash[1]}${withHash[1]}${withHash[2]}${withHash[2]}${withHash[3]}${withHash[3]}`.toLowerCase();
+  }
+  return fallback;
+}
+
+function applyCustomColors(accent, toggleBg, chatBg) {
+  const nextAccent = normalizeHexColor(accent, DEFAULT_ACCENT);
+  const nextToggleBg = normalizeHexColor(toggleBg, DEFAULT_TOGGLE_BG);
+  const nextChatBg = normalizeHexColor(chatBg, DEFAULT_CHAT_BG);
+
+  if (accentHexEl) accentHexEl.value = nextAccent;
+  if (accentPickerEl) accentPickerEl.value = nextAccent;
+  if (toggleBgHexEl) toggleBgHexEl.value = nextToggleBg;
+  if (toggleBgPickerEl) toggleBgPickerEl.value = nextToggleBg;
+  if (chatBgHexEl) chatBgHexEl.value = nextChatBg;
+  if (chatBgPickerEl) chatBgPickerEl.value = nextChatBg;
+
+  try { localStorage.setItem(LS_ACCENT, nextAccent); } catch {}
+  try { localStorage.setItem(LS_TOGGLE_BG, nextToggleBg); } catch {}
+  try { localStorage.setItem(LS_CHAT_BG, nextChatBg); } catch {}
+
+  document.documentElement.style.setProperty("--accent", nextAccent);
+  document.documentElement.style.setProperty("--toggle-bg", nextToggleBg);
+  document.documentElement.style.setProperty("--chat-bg", nextChatBg);
+}
+
 function initSettingsModal() {
   // initialize legacy settings (theme/appearance/bg)
   const curTheme = (() => { try { return localStorage.getItem(LS_THEME) || "slate"; } catch { return "slate"; } })();
@@ -1211,17 +1258,10 @@ function initSettingsModal() {
   applyBackground(curBg);
 
   // initialize new color pickers
-  const accent = (() => { try { return localStorage.getItem(LS_ACCENT) || "#a281ee"; } catch { return "#a281ee"; } })();
-  const toggleBg = (() => { try { return localStorage.getItem(LS_TOGGLE_BG) || "#eef5ff"; } catch { return "#eef5ff"; } })();
-  const chatBg = (() => { try { return localStorage.getItem(LS_CHAT_BG) || "#ffffff"; } catch { return "#ffffff"; } })();
-  if (accentPickerEl) accentPickerEl.value = accent;
-  if (toggleBgPickerEl) toggleBgPickerEl.value = toggleBg;
-  if (chatBgPickerEl) chatBgPickerEl.value = chatBg;
-
-  // Apply CSS variables (CSS will use these later)
-  document.documentElement.style.setProperty("--accent", accent);
-  document.documentElement.style.setProperty("--toggle-bg", toggleBg);
-  document.documentElement.style.setProperty("--chat-bg", chatBg);
+  const accent = (() => { try { return localStorage.getItem(LS_ACCENT) || DEFAULT_ACCENT; } catch { return DEFAULT_ACCENT; } })();
+  const toggleBg = (() => { try { return localStorage.getItem(LS_TOGGLE_BG) || DEFAULT_TOGGLE_BG; } catch { return DEFAULT_TOGGLE_BG; } })();
+  const chatBg = (() => { try { return localStorage.getItem(LS_CHAT_BG) || DEFAULT_CHAT_BG; } catch { return DEFAULT_CHAT_BG; } })();
+  applyCustomColors(accent, toggleBg, chatBg);
 
   settingsModalBtn?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1242,15 +1282,27 @@ function initSettingsModal() {
 
   // color pickers persistence
   accentPickerEl?.addEventListener("input", () => {
-    const v = accentPickerEl.value;
-    try { localStorage.setItem(LS_ACCENT, v); } catch {}
-    document.documentElement.style.setProperty("--accent", v);
+    applyCustomColors(
+      accentPickerEl.value,
+      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
+      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+    );
+  });
+
+  accentHexEl?.addEventListener("change", () => {
+    applyCustomColors(
+      accentHexEl.value,
+      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
+      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+    );
   });
 
   toggleBgPickerEl?.addEventListener("input", () => {
-    const v = toggleBgPickerEl.value;
-    try { localStorage.setItem(LS_TOGGLE_BG, v); } catch {}
-    document.documentElement.style.setProperty("--toggle-bg", v);
+    applyCustomColors(
+      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
+      toggleBgPickerEl.value,
+      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+    );
 
     // toggle-bg only drives the chat surface when Background = gray
     const cur = document.documentElement.dataset.bg || "matching";
@@ -1260,10 +1312,41 @@ function initSettingsModal() {
       if (themeLabelEl) themeLabelEl.textContent = "Gray";
     }
   });
+
+  toggleBgHexEl?.addEventListener("change", () => {
+    applyCustomColors(
+      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
+      toggleBgHexEl.value,
+      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+    );
+
+    const cur = document.documentElement.dataset.bg || "matching";
+    if (cur !== "gray") {
+      applyBackground("gray");
+      try { localStorage.setItem(LS_BG, "gray"); } catch {}
+      if (themeLabelEl) themeLabelEl.textContent = "Gray";
+    }
+  });
+
   chatBgPickerEl?.addEventListener("input", () => {
-    const v = chatBgPickerEl.value;
-    try { localStorage.setItem(LS_CHAT_BG, v); } catch {}
-    document.documentElement.style.setProperty("--chat-bg", v);
+    applyCustomColors(
+      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
+      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
+      chatBgPickerEl.value
+    );
+  });
+
+  chatBgHexEl?.addEventListener("change", () => {
+    applyCustomColors(
+      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
+      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
+      chatBgHexEl.value
+    );
+  });
+
+  restoreDefaultsBtnEl?.addEventListener("click", (e) => {
+    e.preventDefault();
+    applyCustomColors(DEFAULT_ACCENT, DEFAULT_TOGGLE_BG, DEFAULT_CHAT_BG);
   });
 
   // Models

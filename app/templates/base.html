@@ -44,12 +44,12 @@
 
   {% block head_extra %}{% endblock %}
 </head>
-<body class="min-h-screen bg-slate-50 text-slate-900 {% if full_bleed %}full-bleed{% endif %}">
+<body class="min-h-screen {% if full_bleed %}full-bleed{% endif %}">
   {% if (not hide_topbar) and (not full_bleed) %}
-  <header class="topbar">
+  <header class="topbar border-b">
     <div class="container topbar-inner">
-      <a class="brand" href="/">YourSite</a>
-      <nav class="nav">
+      <a class="brand" href="/app">llm_code</a>
+      <nav class="nav" aria-label="Primary">
         <a href="/">Home</a>
         <a href="/app">App</a>
       </nav>
@@ -57,15 +57,15 @@
   </header>
   {% endif %}
 
-  <main class="{% if full_bleed %}w-full h-screen overflow-hidden{% else %}container{% endif %}">
+  <main class="{% if full_bleed %}w-full h-screen overflow-hidden{% else %}container py-6{% endif %}">
     {% block content %}{% endblock %}
   </main>
 
   {% if (not hide_footer) and (not full_bleed) %}
-  <footer class="footer">
+  <footer class="footer border-t">
     <div class="container footer-inner">
       <span>© {{ 2026 }}</span>
-      <span class="muted">Single-container FastAPI + Jinja2</span>
+      <span class="muted">llm_code</span>
     </div>
   </footer>
   {% endif %}
