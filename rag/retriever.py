@@ -23,6 +23,7 @@ from langchain_community.document_loaders.email import (UnstructuredEmailLoader,
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from typing import Any
+import json
 import re
 from datetime import datetime
 try:
@@ -125,6 +126,12 @@ def _normalize_metadata(meta: dict[str, Any], body: str) -> dict[str, Any]:
         out["tags"] = [str(t) for t in tags]
     elif isinstance(tags, str):
         out["tags"] = [tags]
+
+    # webUrl: SharePoint/AppFlow direct link — preserved verbatim for frontend hyperlinking
+    web_url = meta.get("webUrl")
+    if isinstance(web_url, str) and web_url.strip():
+        out["webUrl"] = web_url.strip()
+
     return out
 
 # Simple loader registry by extension
@@ -211,6 +218,21 @@ def _load_documents(input_dir: Path) -> list:
     for d in docs:
         text = getattr(d, "page_content", "") or ""
         existing_meta = dict(getattr(d, "metadata", {}) or {})
+
+        # Merge sidecar .metadata.json if present (written by Lambda after AppFlow S3 sync).
+        # Sidecar supplies SharePoint fields (webUrl, name, createdDateTime, etc.).
+        # Loader metadata (source, page_number) takes priority via right-hand merge.
+        source_path = existing_meta.get("source", "")
+        if source_path:
+            sidecar = Path(source_path).parent / (Path(source_path).stem + ".metadata.json")
+            if sidecar.exists():
+                try:
+                    sidecar_meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                    if isinstance(sidecar_meta, dict):
+                        existing_meta = {**sidecar_meta, **existing_meta}
+                except Exception as e:
+                    print(f"[loader-warning] Could not read sidecar {sidecar}: {e}")
+
         meta_raw, body = _parse_frontmatter(text)
         combined_meta = {**existing_meta, **meta_raw}
         norm = _normalize_metadata(combined_meta, body)
