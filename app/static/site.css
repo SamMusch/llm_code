@@ -437,6 +437,16 @@ button{
   color: var(--text-main);
 }
 
+body.settings-dragging,
+body.settings-dragging *{
+  user-select: none !important;
+}
+
+body.settings-dragging #settingsDialogHeader,
+body.settings-dragging #settingsDialogHeader *{
+  cursor: move !important;
+}
+
 #settingsModal *{
   color: inherit;
 }

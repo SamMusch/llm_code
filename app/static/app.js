@@ -61,6 +61,8 @@ const projectListEl = el("projectList");
 // Settings modal
 const settingsModalBtn = el("settingsModalBtn");
 const settingsModalEl = el("settingsModal");
+const settingsDialogEl = el("settingsDialog");
+const settingsDialogHeaderEl = el("settingsDialogHeader");
 const modelSelectEl = el("modelSelect");
 const accentHexEl = el("accentHex");
 const accentPickerEl = el("accentPicker");
@@ -1328,6 +1330,7 @@ function openSettingsModal() {
   if (!settingsModalEl) return;
   settingsModalEl.classList.remove("hidden");
   settingsModalEl.setAttribute("aria-hidden", "false");
+  centerSettingsDialog();
   populateModelSelect();
 }
 
@@ -1335,6 +1338,124 @@ function closeSettingsModal() {
   if (!settingsModalEl) return;
   settingsModalEl.classList.add("hidden");
   settingsModalEl.setAttribute("aria-hidden", "true");
+}
+
+function centerSettingsDialog() {
+  if (!settingsDialogEl) return;
+
+  const prevVisibility = settingsDialogEl.style.visibility;
+  settingsDialogEl.style.visibility = "hidden";
+  settingsDialogEl.style.transform = "none";
+  settingsDialogEl.style.left = "0px";
+  settingsDialogEl.style.top = "0px";
+
+  const rect = settingsDialogEl.getBoundingClientRect();
+  const left = Math.max(8, Math.round((window.innerWidth - rect.width) / 2));
+  const top = Math.max(8, Math.round((window.innerHeight - rect.height) / 2));
+
+  settingsDialogEl.style.left = `${left}px`;
+  settingsDialogEl.style.top = `${top}px`;
+  settingsDialogEl.style.transform = "none";
+  settingsDialogEl.style.visibility = prevVisibility || "";
+}
+
+function clampSettingsDialogPosition(left, top) {
+  if (!settingsDialogEl) return { left, top };
+
+  const rect = settingsDialogEl.getBoundingClientRect();
+  const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+
+  return {
+    left: Math.min(Math.max(8, left), maxLeft),
+    top: Math.min(Math.max(8, top), maxTop),
+  };
+}
+
+function initSettingsDialogDrag() {
+  if (!settingsDialogEl || !settingsDialogHeaderEl) return;
+
+  let dragging = false;
+  let pendingDrag = false;
+  let startClientX = 0;
+  let startClientY = 0;
+  let originLeft = 0;
+  let originTop = 0;
+
+  const DRAG_THRESHOLD_PX = 4;
+
+  const stopDragging = () => {
+    dragging = false;
+    pendingDrag = false;
+    document.body.classList.remove("settings-dragging");
+  };
+
+  settingsDialogHeaderEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target && e.target.closest('[data-close="settings"]')) return;
+
+    const rect = settingsDialogEl.getBoundingClientRect();
+    const inlineLeft = parseFloat(settingsDialogEl.style.left || "");
+    const inlineTop = parseFloat(settingsDialogEl.style.top || "");
+
+    pendingDrag = true;
+    dragging = false;
+    startClientX = e.clientX;
+    startClientY = e.clientY;
+    originLeft = Number.isFinite(inlineLeft) ? inlineLeft : rect.left;
+    originTop = Number.isFinite(inlineTop) ? inlineTop : rect.top;
+
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!pendingDrag && !dragging) return;
+
+    const movedX = e.clientX - startClientX;
+    const movedY = e.clientY - startClientY;
+
+    if (!dragging) {
+      if (Math.abs(movedX) < DRAG_THRESHOLD_PX && Math.abs(movedY) < DRAG_THRESHOLD_PX) {
+        return;
+      }
+
+      settingsDialogEl.style.transform = "none";
+      settingsDialogEl.style.left = `${originLeft}px`;
+      settingsDialogEl.style.top = `${originTop}px`;
+
+      dragging = true;
+      pendingDrag = false;
+      document.body.classList.add("settings-dragging");
+    }
+
+    const nextLeft = originLeft + movedX;
+    const nextTop = originTop + movedY;
+    const clamped = clampSettingsDialogPosition(nextLeft, nextTop);
+
+    settingsDialogEl.style.left = `${clamped.left}px`;
+    settingsDialogEl.style.top = `${clamped.top}px`;
+  });
+
+  document.addEventListener("mouseup", () => {
+    stopDragging();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!settingsModalEl || settingsModalEl.classList.contains("hidden")) return;
+
+    const left = parseFloat(settingsDialogEl.style.left || "0");
+    const top = parseFloat(settingsDialogEl.style.top || "0");
+
+    if (!Number.isFinite(left) || !Number.isFinite(top) || (left === 0 && top === 0)) {
+      centerSettingsDialog();
+      return;
+    }
+
+    const clamped = clampSettingsDialogPosition(left, top);
+    settingsDialogEl.style.left = `${clamped.left}px`;
+    settingsDialogEl.style.top = `${clamped.top}px`;
+    settingsDialogEl.style.transform = "none";
+  });
 }
 
 
@@ -1370,6 +1491,7 @@ function applyCustomColors(accent, toggleBg, chatBg) {
 }
 
 function initSettingsModal() {
+  initSettingsDialogDrag();
   // initialize legacy settings (theme/appearance/bg)
   const curTheme = (() => { try { return localStorage.getItem(LS_THEME) || "slate"; } catch { return "slate"; } })();
   const curAppearance = "light";
