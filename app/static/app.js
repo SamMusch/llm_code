@@ -1,323 +1,124 @@
+const $ = (id) => document.getElementById(id);
+const qs = (sel, root = document) => root.querySelector(sel);
+const qsa = (sel, root = document) => [...root.querySelectorAll(sel)];
+const on = (el, evt, fn) => el?.addEventListener(evt, fn);
 
-const el = (id) => document.getElementById(id);
+const LS = {
+  THEME: "llm_code_theme",
+  APPEARANCE: "llm_code_appearance",
+  BG: "llm_code_bg",
+  ACCENT: "llm_code_accent_hex",
+  TOGGLE_BG: "llm_code_toggle_bg_hex",
+  CHAT_BG: "llm_code_chat_bg_hex",
+  MODEL: "llm_code_model",
+  PROJECTS: "llm_code_projects_v1",
+  SESSION_META: "llm_code_session_meta_v1",
+  RIGHTBAR: "llm_code_rightbar_v1",
+  SELECTED_TOOLS: "llm_code_selected_tools_v1",
+};
 
-function syncDateInputState(root = document) {
-  const dateInputs = root.querySelectorAll('#rightbar input[type="date"]');
-  dateInputs.forEach((input) => {
-    const hasValue = !!input.value;
-    input.classList.toggle('has-value', hasValue);
-  });
-}
+const DEFAULTS = {
+  ACCENT: "#bfbfbf",
+  TOGGLE_BG: "#ECECEC",
+  CHAT_BG: "#FFFFFF",
+  THEME: "slate",
+  BG: "matching",
+};
 
-const chatListEl = el("chatList");
-const chatTitleEl = el("chatTitle");
-const mobileTitleEl = el("mobileTitle");
-const messagesEl = el("chatMessages");
-const inputEl = el("chatInput");
-const sendBtn = el("sendBtn");
-const newChatBtn = el("newChatBtn");
+const ui = {
+  chatList: $("chatList"),
+  chatTitle: $("chatTitle"),
+  mobileTitle: $("mobileTitle"),
+  messages: $("chatMessages"),
+  input: $("chatInput"),
+  sendBtn: $("sendBtn"),
+  newChatBtn: $("newChatBtn"),
 
-// Attachments
-const attachBtn = el("attachBtn");
-const fileInputEl = el("fileInput");
-const attachmentStripEl = el("attachmentStrip");
+  attachBtn: $("attachBtn"),
+  fileInput: $("fileInput"),
+  attachmentStrip: $("attachmentStrip"),
 
-let pendingAttachments = []; // [{id,name,size}]
+  sidebar: $("sidebar"),
+  sidebarToggle: $("sidebarToggle"),
+  sidebarToggleDesktop: $("sidebarToggleDesktop"),
+  sidebarClose: $("sidebarClose"),
+  sidebarBackdrop: $("sidebarBackdrop"),
+  chatSearch: $("chatSearch"),
 
-// Sidebar + controls
-const sidebarEl = el("sidebar");
-const sidebarToggleEl = el("sidebarToggle");
-const sidebarToggleDesktopEl = el("sidebarToggleDesktop");
-const sidebarCloseEl = el("sidebarClose");
-const sidebarBackdropEl = el("sidebarBackdrop");
-const chatSearchEl = el("chatSearch");
+  rightbar: $("rightbar"),
+  rightbarToggle: $("rightbarToggle"),
+  rightbarToggleDesktop: $("rightbarToggleDesktop"),
+  rightbarClose: $("rightbarClose"),
+  rightbarBackdrop: $("rightbarBackdrop"),
 
-// Right sidebar (tools)
-const rightbarEl = el("rightbar");
-const rightbarToggleEl = el("rightbarToggle");
-const rightbarToggleDesktopEl = el("rightbarToggleDesktop");
-const rightbarCloseEl = el("rightbarClose");
-const rightbarBackdropEl = el("rightbarBackdrop");
+  toolDb: $("toolDb"),
+  toolPlaceholder1: $("toolPlaceholder1"),
+  placeholderA: $("placeholderA"),
+  placeholderB: $("placeholderB"),
 
-const toolDbEl = el("toolDb");
-const toolPlaceholder1El = el("toolPlaceholder1");
-const placeholderAEl = el("placeholderA");
-const placeholderBEl = el("placeholderB");
+  metaTitle: $("metaTitle"),
+  metaTags: $("metaTags"),
+  metaWordMin: $("metaWordMin"),
+  metaWordMax: $("metaWordMax"),
+  metaCreatedFrom: $("metaCreatedFrom"),
+  metaCreatedTo: $("metaCreatedTo"),
+  metaModifiedFrom: $("metaModifiedFrom"),
+  metaModifiedTo: $("metaModifiedTo"),
 
-// Metadata filters
-const metaTitleEl = el("metaTitle");
-const metaTagsEl = el("metaTags");
-const metaWordMinEl = el("metaWordMin");
-const metaWordMaxEl = el("metaWordMax");
-const metaCreatedFromEl = el("metaCreatedFrom");
-const metaCreatedToEl = el("metaCreatedTo");
-const metaModifiedFromEl = el("metaModifiedFrom");
-const metaModifiedToEl = el("metaModifiedTo");
+  newProjectBtn: $("newProjectBtn"),
+  projectList: $("projectList"),
 
-// Projects
-const newProjectBtn = el("newProjectBtn");
-const projectListEl = el("projectList");
+  settingsModalBtn: $("settingsModalBtn"),
+  settingsModal: $("settingsModal"),
+  modelSelect: $("modelSelect"),
+  accentHex: $("accentHex"),
+  accentPicker: $("accentPicker"),
+  toggleBgHex: $("toggleBgHex"),
+  toggleBgPicker: $("toggleBgPicker"),
+  chatBgHex: $("chatBgHex"),
+  chatBgPicker: $("chatBgPicker"),
+  restoreDefaultsBtn: $("restoreDefaultsBtn"),
+  scheduleTaskBtn: $("scheduleTaskBtn"),
+  taskList: $("taskList"),
+  themeLabel: $("themeLabel"),
+};
 
-// Settings modal
-const settingsModalBtn = el("settingsModalBtn");
-const settingsModalEl = el("settingsModal");
-const settingsDialogEl = el("settingsDialog");
-const settingsDialogHeaderEl = el("settingsDialogHeader");
-const modelSelectEl = el("modelSelect");
-const accentHexEl = el("accentHex");
-const accentPickerEl = el("accentPicker");
-const toggleBgHexEl = el("toggleBgHex");
-const toggleBgPickerEl = el("toggleBgPicker");
-const chatBgHexEl = el("chatBgHex");
-const chatBgPickerEl = el("chatBgPicker");
-const restoreDefaultsBtnEl = el("restoreDefaultsBtn");
-const scheduleTaskBtnEl = el("scheduleTaskBtn");
-const taskListEl = el("taskList");
+const state = {
+  systemMq: null,
+  pendingAttachments: [],
+  sessions: [],
+  activeSessionId: "",
+  activeMessages: [],
+  selectedProjectId: "all",
+};
 
-const themeLabelEl = el("themeLabel");
-
-// Local settings
-const LS_THEME = "llm_code_theme";            // legacy: slate|blue|emerald
-// Appearance is forced to light mode (no user option)
-const LS_APPEARANCE = "llm_code_appearance";  // legacy; no longer used
-const LS_BG = "llm_code_bg";                  // legacy: matching|gray
-
-// New preferences (color wheels)
-const LS_ACCENT = "llm_code_accent_hex";      // e.g. #a281ee
-const LS_TOGGLE_BG = "llm_code_toggle_bg_hex";// e.g. #eef5ff
-const LS_CHAT_BG = "llm_code_chat_bg_hex";    // e.g. #ffffff
-
-const DEFAULT_ACCENT = "#bfbfbf";
-const DEFAULT_TOGGLE_BG = "#ECECEC";
-const DEFAULT_CHAT_BG = "#FFFFFF";
-
-const LS_MODEL = "llm_code_model";           // selected model name
-
-// Projects + chat metadata
-const LS_PROJECTS = "llm_code_projects_v1";   // [{id,name,created_ts}]
-const LS_SESSION_META = "llm_code_session_meta_v1"; // {session_id:{titleOverride?,projectId?,pinned?,deleted?}}
-
-const LS_RIGHTBAR = "llm_code_rightbar_v1";            // { open: boolean }
-const LS_SELECTED_TOOLS = "llm_code_selected_tools_v1"; // string[]
-
-
-let systemMq = null;
-
-// In-memory UI state (sessions + active session)
-let sessions = []; // [{session_id,last_ts,title}]
-let activeSessionId = "";
-let activeMessages = []; // [{role, content, ts?}]
-let selectedProjectId = "all"; // "all" or a project id
-
-function loadProjects() {
+function loadJsonLS(key, fallback) {
   try {
-    const arr = JSON.parse(localStorage.getItem(LS_PROJECTS) || "[]");
-    return Array.isArray(arr) ? arr : [];
+    return JSON.parse(localStorage.getItem(key) || "") ?? fallback;
   } catch {
-    return [];
+    return fallback;
   }
 }
 
-function saveProjects(arr) {
-  localStorage.setItem(LS_PROJECTS, JSON.stringify(arr || []));
+function saveJsonLS(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
 }
 
-function loadSessionMeta() {
+function getLsValue(key, fallback = "") {
   try {
-    const obj = JSON.parse(localStorage.getItem(LS_SESSION_META) || "{}");
-    return obj && typeof obj === "object" ? obj : {};
+    const value = localStorage.getItem(key);
+    return value == null ? fallback : value;
   } catch {
-    return {};
+    return fallback;
   }
 }
 
-function saveSessionMeta(obj) {
-  localStorage.setItem(LS_SESSION_META, JSON.stringify(obj || {}));
-}
-
-function getMeta(sessionId) {
-  const meta = loadSessionMeta();
-  return meta[sessionId] || {};
-}
-
-function setMeta(sessionId, patch) {
-  const meta = loadSessionMeta();
-  meta[sessionId] = { ...(meta[sessionId] || {}), ...(patch || {}) };
-  saveSessionMeta(meta);
-}
-
-function displayTitleForSession(s) {
-  const m = getMeta(s.session_id);
-  const title = (m.titleOverride || s.title || "Untitled").trim() || "Untitled";
-  return title;
-}
-
-function renderChatList(list) {
-  chatListEl.innerHTML = "";
-
-  const q = (chatSearchEl?.value || "").trim().toLowerCase();
-  const projects = loadProjects();
-
-  const filtered = (list || [])
-    .map((s) => {
-      const m = getMeta(s.session_id);
-      return { ...s, _meta: m };
-    })
-    .filter((s) => !s._meta.deleted)
-    .filter((s) => {
-      if (selectedProjectId === "all") return true;
-      return (s._meta.projectId || "") === selectedProjectId;
-    })
-    .filter((s) => {
-      if (!q) return true;
-      const t = displayTitleForSession(s).toLowerCase();
-      return t.includes(q);
-    });
-
-  filtered
-    .slice()
-    .sort((a, b) => {
-      const ap = a._meta.pinned ? 1 : 0;
-      const bp = b._meta.pinned ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-      return (b.last_ts || 0) - (a.last_ts || 0);
-    })
-    .forEach((s) => {
-      const row = document.createElement("div");
-      row.className = "group flex items-center gap-2";
-
-      const btn = document.createElement("button");
-      const isActive = s.session_id === activeSessionId;
-      btn.className =
-        "flex-1 truncate rounded-lg px-3 py-2 text-left text-sm border transition " +
-        (isActive ? "chatitem-active" : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50");
-      btn.type = "button";
-
-      const title = displayTitleForSession(s);
-      btn.textContent = title;
-      btn.addEventListener("click", () => openSession(s.session_id));
-
-      // 3-dots menu button (shown on hover)
-      const menuBtn = document.createElement("button");
-      menuBtn.type = "button";
-      menuBtn.className =
-        "chatMenuBtn hidden group-hover:inline-flex shrink-0 h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
-      menuBtn.textContent = "⋯";
-
-      const menu = document.createElement("div");
-      menu.className = "chatMenu hidden fixed z-[9999] w-56 rounded-xl border border-slate-200 bg-white p-1 shadow";
-
-      const wrap = document.createElement("div");
-      wrap.className = "relative";
-
-      function item(label, onClick, extraClass = "") {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className =
-          "w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 " + extraClass;
-        b.textContent = label;
-        b.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          menu.classList.add("hidden");
-          onClick();
-        });
-        return b;
-      }
-
-      menu.appendChild(
-        item("Rename", () => {
-          const cur = displayTitleForSession(s);
-          const next = prompt("Rename chat", cur);
-          if (next === null) return;
-          setMeta(s.session_id, { titleOverride: (next || "").trim() || cur });
-          renderChatList(sessions);
-          setHeaderTitle();
-        })
-      );
-
-      // Move to project (simple prompt dropdown later)
-      menu.appendChild(
-        item("Move to project…", () => {
-          if (!projects.length) {
-            alert("No projects yet. Create one first.");
-            return;
-          }
-          const names = projects.map((p) => p.name).join("\n");
-          const pick = prompt("Move to which project? Type exact name:\n" + names);
-          if (!pick) return;
-          const p = projects.find((x) => x.name === pick);
-          if (!p) {
-            alert("Project not found.");
-            return;
-          }
-          setMeta(s.session_id, { projectId: p.id });
-          // refresh UI so it moves immediately under current filter
-          renderProjects();
-          renderChatList(sessions);
-        })
-      );
-
-      menu.appendChild(
-        item(s._meta.pinned ? "Unpin" : "Pin", () => {
-          setMeta(s.session_id, { pinned: !s._meta.pinned });
-          renderChatList(sessions);
-        })
-      );
-
-      menu.appendChild(
-        item("Delete", () => {
-          const ok = confirm("Delete this chat from the sidebar? (This does not delete from DynamoDB yet.)");
-          if (!ok) return;
-          setMeta(s.session_id, { deleted: true });
-          // If deleting active session, switch to newest remaining
-          if (s.session_id === activeSessionId) {
-            const remaining = sessions.filter((x) => !getMeta(x.session_id).deleted);
-            activeSessionId = remaining[0]?.session_id || newSessionId();
-            openSession(activeSessionId);
-          }
-          renderChatList(sessions);
-        }, "text-red-600")
-      );
-
-      wrap.appendChild(menuBtn);
-
-      menuBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        document.querySelectorAll(".chatMenu").forEach((m) => m.classList.add("hidden"));
-        document.querySelectorAll(".chatMenuSub").forEach((m) => m.classList.add("hidden"));
-
-        if (menu.parentElement !== document.body) document.body.appendChild(menu);
-
-        menu.classList.toggle("hidden");
-
-        const r = menuBtn.getBoundingClientRect();
-        const left = Math.min(window.innerWidth - 260, r.left);
-        const top = Math.min(window.innerHeight - 220, r.bottom + 6);
-        menu.style.left = left + "px";
-        menu.style.top = top + "px";
-      });
-
-
-      row.appendChild(btn);
-      row.appendChild(wrap);
-      chatListEl.appendChild(row);
-    });
-}
-
-function autosizeTextarea() {
-  if (!inputEl) return;
-  inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + "px";
-}
-
-function setHeaderTitle() {
-  const found = sessions.find((s) => s.session_id === activeSessionId);
-  const title = found ? displayTitleForSession(found) : "New chat";
-  if (chatTitleEl) chatTitleEl.textContent = title;
-  if (mobileTitleEl) mobileTitleEl.textContent = title;
+function setLsValue(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
 }
 
 async function fetchJson(url) {
@@ -329,56 +130,65 @@ async function fetchJson(url) {
   return await r.json();
 }
 
-async function fetchModels() {
-  // Returns { models: ["modelA", "modelB", ...], default?: "modelA" }
-  return await fetchJson("/app/api/models");
+function syncDateInputState(root = document) {
+  qsa('#rightbar input[type="date"]', root).forEach((input) => {
+    input.classList.toggle("has-value", !!input.value);
+  });
 }
 
-async function populateModelSelect() {
-  if (!modelSelectEl) return;
+function loadProjects() {
+  const arr = loadJsonLS(LS.PROJECTS, []);
+  return Array.isArray(arr) ? arr : [];
+}
 
-  let data;
-  try {
-    data = await fetchModels();
-  } catch (err) {
-    // If backend isn't wired yet, keep whatever is already in the dropdown.
-    return;
-  }
+function saveProjects(arr) {
+  saveJsonLS(LS.PROJECTS, arr || []);
+}
 
-  const models = Array.isArray(data?.models) ? data.models.filter((m) => typeof m === "string" && m.trim()) : [];
-  if (!models.length) return;
+function loadSessionMeta() {
+  const obj = loadJsonLS(LS.SESSION_META, {});
+  return obj && typeof obj === "object" ? obj : {};
+}
 
-  // Preserve current selection if possible
-  const saved = (() => { try { return localStorage.getItem(LS_MODEL) || ""; } catch { return ""; } })();
-  const preferred = (saved || data?.default || "").trim();
+function saveSessionMeta(obj) {
+  saveJsonLS(LS.SESSION_META, obj || {});
+}
 
-  modelSelectEl.innerHTML = "";
+function getMeta(sessionId) {
+  return loadSessionMeta()[sessionId] || {};
+}
 
-  models.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.textContent = m;
-    modelSelectEl.appendChild(opt);
-  });
+function setMeta(sessionId, patch) {
+  const meta = loadSessionMeta();
+  meta[sessionId] = { ...(meta[sessionId] || {}), ...(patch || {}) };
+  saveSessionMeta(meta);
+}
 
-  // Choose selection: saved/default if present, else first
-  const exists = preferred && models.includes(preferred);
-  modelSelectEl.value = exists ? preferred : models[0];
+function displayTitleForSession(s) {
+  const m = getMeta(s.session_id);
+  return (m.titleOverride || s.title || "Untitled").trim() || "Untitled";
+}
 
-  // Persist selection so it survives reloads
-  try { localStorage.setItem(LS_MODEL, modelSelectEl.value); } catch {}
+function autosizeTextarea() {
+  if (!ui.input) return;
+  ui.input.style.height = "auto";
+  ui.input.style.height = Math.min(ui.input.scrollHeight, 160) + "px";
+}
+
+function setHeaderTitle() {
+  const found = state.sessions.find((s) => s.session_id === state.activeSessionId);
+  const title = found ? displayTitleForSession(found) : "New chat";
+  if (ui.chatTitle) ui.chatTitle.textContent = title;
+  if (ui.mobileTitle) ui.mobileTitle.textContent = title;
 }
 
 function newSessionId() {
-  // simple client-generated id; server treats it as an opaque string
-  // (we'll migrate to server-issued ids later if desired)
   return "s_" + Date.now() + "_" + Math.random().toString(16).slice(2);
 }
 
 function bubble(role, content) {
   const wrap = document.createElement("div");
   const isUser = role === "user";
-
   wrap.className = "flex w-full " + (isUser ? "justify-end" : "justify-start");
 
   const inner = document.createElement("div");
@@ -396,88 +206,21 @@ function bubble(role, content) {
 }
 
 function renderMessages(msgs) {
-  messagesEl.innerHTML = "";
+  if (!ui.messages) return;
+  ui.messages.innerHTML = "";
   (msgs || []).forEach((m) => {
     const { wrap } = bubble(m.role, m.content);
-    messagesEl.appendChild(wrap);
+    ui.messages.appendChild(wrap);
   });
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  ui.messages.scrollTop = ui.messages.scrollHeight;
 }
 
-// Helper to refresh only the sidebar sessions list, without re-rendering messages or steps panel
-async function refreshSessionsListOnly() {
-  const data = await fetchJson("/app/api/sessions?limit=50");
-  sessions = data.sessions || [];
-  renderChatList(sessions);
-  // Do NOT call openSession() here; it re-renders messages and would remove the steps panel.
-}
-
-async function loadSessions() {
-  const data = await fetchJson("/app/api/sessions?limit=50");
-  sessions = data.sessions || [];
-  renderChatList(sessions);
-
-  // If no active session yet, pick the newest. If none exist, create a fresh client id.
-  if (!activeSessionId) {
-    activeSessionId = sessions[0]?.session_id || newSessionId();
-  }
-
-  // If active session exists in the list, load it; otherwise start empty (new session)
-  if (sessions.some((s) => s.session_id === activeSessionId)) {
-    await openSession(activeSessionId);
-  } else {
-    activeMessages = [];
-    setHeaderTitle();
-    renderMessages(activeMessages);
-  }
-}
-
-async function openSession(sessionId) {
-  activeSessionId = sessionId;
-
-  // If the session is not yet in DynamoDB (brand-new), just reset UI.
-  if (!sessions.some((s) => s.session_id === sessionId)) {
-    activeMessages = [];
-    setHeaderTitle();
-    renderChatList(sessions);
-    renderMessages(activeMessages);
-    inputEl?.focus();
-    return;
-  }
-
-  const data = await fetchJson(
-    `/app/api/sessions/${encodeURIComponent(sessionId)}?limit=200`
-  );
-
-  // data.messages is already [{role, content, ts?}] via lc_messages_to_dicts
-  activeMessages = data.messages || [];
-
-  setHeaderTitle();
-  renderChatList(sessions);
-  renderMessages(activeMessages);
-
-  autosizeTextarea();
-  inputEl?.focus();
-}
-
-function updateLastAssistantBubble(acc) {
-  // update the last assistant bubble in-place
-  const last = messagesEl.lastElementChild;
-  const inner = last?.firstElementChild;
-  if (inner) {
-    const body = inner.querySelector?.(".messageBody") || inner;
-    body.innerHTML = renderMarkdown(acc);
-  }
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-// --- Steps + sources panel helpers ---
 function ensureResponsePanelsContainer() {
-  const last = messagesEl.lastElementChild;
+  const last = ui.messages?.lastElementChild;
   const inner = last?.firstElementChild;
   if (!inner) return null;
 
-  let row = inner.querySelector?.(".responsePanelsRow");
+  let row = qs(".responsePanelsRow", inner);
   if (row) return row;
 
   row = document.createElement("div");
@@ -490,7 +233,7 @@ function ensureStepsPanel() {
   const row = ensureResponsePanelsContainer();
   if (!row) return null;
 
-  let panel = row.querySelector?.(".stepsPanel");
+  let panel = qs(".stepsPanel", row);
   if (panel) return panel;
 
   panel = document.createElement("details");
@@ -506,10 +249,7 @@ function ensureStepsPanel() {
   const list = document.createElement("div");
   list.className = "stepsList mt-2 space-y-2";
 
-  panel.appendChild(summary);
-  panel.appendChild(meta);
-  panel.appendChild(list);
-
+  panel.append(summary, meta, list);
   row.appendChild(panel);
   return panel;
 }
@@ -518,7 +258,7 @@ function ensureSourcesPanel() {
   const row = ensureResponsePanelsContainer();
   if (!row) return null;
 
-  let panel = row.querySelector?.(".sourcesPanel");
+  let panel = qs(".sourcesPanel", row);
   if (panel) return panel;
 
   panel = document.createElement("details");
@@ -531,9 +271,7 @@ function ensureSourcesPanel() {
   const body = document.createElement("div");
   body.className = "sourcesBody mt-2 text-slate-800";
 
-  panel.appendChild(summary);
-  panel.appendChild(body);
-
+  panel.append(summary, body);
   row.appendChild(panel);
   return panel;
 }
@@ -541,46 +279,35 @@ function ensureSourcesPanel() {
 function setStepsMeta(traceId) {
   const panel = ensureStepsPanel();
   if (!panel) return;
-  const meta = panel.querySelector(".stepsMeta");
-  if (!meta) return;
-  if (!traceId) {
-    meta.textContent = "";
-    return;
+  const meta = qs(".stepsMeta", panel);
+  if (meta) meta.textContent = traceId ? `trace_id: ${traceId}` : "";
+}
+
+function asStepText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
   }
-  meta.textContent = `trace_id: ${traceId}`;
 }
 
 function renderSteps(steps) {
   const panel = ensureStepsPanel();
   if (!panel) return;
-  const list = panel.querySelector(".stepsList");
+  const list = qs(".stepsList", panel);
   if (!list) return;
   list.innerHTML = "";
 
   (steps || []).forEach((s) => {
     const name = s?.name || "";
     const status = s?.status || "";
-
-    const asText = (v) => {
-      if (v == null) return "";
-      if (typeof v === "string") return v;
-      try {
-        return JSON.stringify(v, null, 2);
-      } catch {
-        return String(v);
-      }
-    };
-
     const combinedText = (
-      asText(s?.input) +
-      asText(s?.output) +
-      asText(s?.error)
+      asStepText(s?.input) + asStepText(s?.output) + asStepText(s?.error)
     ).trim();
 
-    // Skip uninformative placeholder steps
-    if ((s?.step_type === "step" || !s?.step_type) && !name && !status && !combinedText) {
-      return;
-    }
+    if ((s?.step_type === "step" || !s?.step_type) && !name && !status && !combinedText) return;
 
     const row = document.createElement("div");
     row.className = "rounded-md border border-slate-200 bg-white p-2";
@@ -593,13 +320,13 @@ function renderSteps(steps) {
     pre.className = "mt-1 whitespace-pre-wrap text-slate-800";
 
     if (s.status === "start") {
-      const t = asText(s.input);
+      const t = asStepText(s.input);
       pre.textContent = t ? `input:\n${t}` : "";
     } else if (s.status === "ok") {
-      const t = asText(s.output);
+      const t = asStepText(s.output);
       pre.textContent = t ? `output:\n${t}` : "";
     } else {
-      const t = asText(s.error);
+      const t = asStepText(s.error);
       pre.textContent = t ? `error:\n${t}` : "";
     }
 
@@ -612,7 +339,7 @@ function renderSteps(steps) {
 function renderSources(sources) {
   const panel = ensureSourcesPanel();
   if (!panel) return;
-  const body = panel.querySelector(".sourcesBody");
+  const body = qs(".sourcesBody", panel);
   if (!body) return;
 
   body.innerHTML = "";
@@ -637,21 +364,19 @@ function renderSources(sources) {
 
   items.forEach((src) => {
     const li = document.createElement("li");
-
     const hasUrl = typeof src?.webUrl === "string" && src.webUrl.trim();
     const label = String(src?.name || src?.source || "unknown").trim() || "unknown";
-
-    const textNode = hasUrl ? document.createElement("a") : document.createElement("span");
-    textNode.textContent = label;
+    const node = hasUrl ? document.createElement("a") : document.createElement("span");
+    node.textContent = label;
 
     if (hasUrl) {
-      textNode.href = src.webUrl;
-      textNode.target = "_blank";
-      textNode.rel = "noopener noreferrer";
-      textNode.className = "underline hover:no-underline";
+      node.href = src.webUrl;
+      node.target = "_blank";
+      node.rel = "noopener noreferrer";
+      node.className = "underline hover:no-underline";
     }
 
-    li.appendChild(textNode);
+    li.appendChild(node);
 
     const pageNumber = src?.page_number;
     if (pageNumber !== null && pageNumber !== undefined && pageNumber !== "") {
@@ -662,52 +387,208 @@ function renderSources(sources) {
   });
 }
 
-function _csvToList(s) {
-  return (s || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
+function renderChatList(list) {
+  if (!ui.chatList) return;
+  ui.chatList.innerHTML = "";
+
+  const q = (ui.chatSearch?.value || "").trim().toLowerCase();
+  const projects = loadProjects();
+
+  const filtered = (list || [])
+    .map((s) => ({ ...s, _meta: getMeta(s.session_id) }))
+    .filter((s) => !s._meta.deleted)
+    .filter((s) => state.selectedProjectId === "all" || (s._meta.projectId || "") === state.selectedProjectId)
+    .filter((s) => !q || displayTitleForSession(s).toLowerCase().includes(q));
+
+  filtered
+    .slice()
+    .sort((a, b) => {
+      const ap = a._meta.pinned ? 1 : 0;
+      const bp = b._meta.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return (b.last_ts || 0) - (a.last_ts || 0);
+    })
+    .forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "group flex items-center gap-2";
+
+      const btn = document.createElement("button");
+      const isActive = s.session_id === state.activeSessionId;
+      btn.className =
+        "flex-1 truncate rounded-lg px-3 py-2 text-left text-sm border transition " +
+        (isActive ? "chatitem-active" : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50");
+      btn.type = "button";
+      btn.textContent = displayTitleForSession(s);
+      btn.addEventListener("click", () => openSession(s.session_id));
+
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className =
+        "chatMenuBtn hidden group-hover:inline-flex shrink-0 h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
+      menuBtn.textContent = "⋯";
+
+      const menu = document.createElement("div");
+      menu.className = "chatMenu hidden fixed z-[9999] w-56 rounded-xl border border-slate-200 bg-white p-1 shadow";
+
+      const wrap = document.createElement("div");
+      wrap.className = "relative";
+
+      function menuItem(label, onClick, extraClass = "") {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 ${extraClass}`;
+        b.textContent = label;
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          menu.classList.add("hidden");
+          onClick();
+        });
+        return b;
+      }
+
+      menu.appendChild(menuItem("Rename", () => {
+        const cur = displayTitleForSession(s);
+        const next = prompt("Rename chat", cur);
+        if (next === null) return;
+        setMeta(s.session_id, { titleOverride: (next || "").trim() || cur });
+        renderChatList(state.sessions);
+        setHeaderTitle();
+      }));
+
+      menu.appendChild(menuItem("Move to project…", () => {
+        if (!projects.length) {
+          alert("No projects yet. Create one first.");
+          return;
+        }
+        const names = projects.map((p) => p.name).join("\n");
+        const pick = prompt("Move to which project? Type exact name:\n" + names);
+        if (!pick) return;
+        const p = projects.find((x) => x.name === pick);
+        if (!p) {
+          alert("Project not found.");
+          return;
+        }
+        setMeta(s.session_id, { projectId: p.id });
+        renderProjects();
+        renderChatList(state.sessions);
+      }));
+
+      menu.appendChild(menuItem(s._meta.pinned ? "Unpin" : "Pin", () => {
+        setMeta(s.session_id, { pinned: !s._meta.pinned });
+        renderChatList(state.sessions);
+      }));
+
+      menu.appendChild(menuItem("Delete", () => {
+        const ok = confirm("Delete this chat from the sidebar? (This does not delete from DynamoDB yet.)");
+        if (!ok) return;
+        setMeta(s.session_id, { deleted: true });
+        if (s.session_id === state.activeSessionId) {
+          const remaining = state.sessions.filter((x) => !getMeta(x.session_id).deleted);
+          state.activeSessionId = remaining[0]?.session_id || newSessionId();
+          openSession(state.activeSessionId);
+        }
+        renderChatList(state.sessions);
+      }, "text-red-600"));
+
+      wrap.appendChild(menuBtn);
+
+      menuBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        qsa(".chatMenu").forEach((m) => m.classList.add("hidden"));
+        qsa(".chatMenuSub").forEach((m) => m.classList.add("hidden"));
+
+        if (menu.parentElement !== document.body) document.body.appendChild(menu);
+        menu.classList.toggle("hidden");
+
+        const r = menuBtn.getBoundingClientRect();
+        menu.style.left = Math.min(window.innerWidth - 260, r.left) + "px";
+        menu.style.top = Math.min(window.innerHeight - 220, r.bottom + 6) + "px";
+      });
+
+      row.append(btn, wrap);
+      ui.chatList.appendChild(row);
+    });
 }
 
-// Build metadata filters payload. This is sent to the backend as URL-encoded JSON.
-// NOTE: Only exact-match keys are currently wired end-to-end on the backend.
+async function refreshSessionsListOnly() {
+  const data = await fetchJson("/app/api/sessions?limit=50");
+  state.sessions = data.sessions || [];
+  renderChatList(state.sessions);
+}
+
+async function loadSessions() {
+  const data = await fetchJson("/app/api/sessions?limit=50");
+  state.sessions = data.sessions || [];
+  renderChatList(state.sessions);
+
+  if (!state.activeSessionId) {
+    state.activeSessionId = state.sessions[0]?.session_id || newSessionId();
+  }
+
+  if (state.sessions.some((s) => s.session_id === state.activeSessionId)) {
+    await openSession(state.activeSessionId);
+  } else {
+    state.activeMessages = [];
+    setHeaderTitle();
+    renderMessages(state.activeMessages);
+  }
+}
+
+async function openSession(sessionId) {
+  state.activeSessionId = sessionId;
+
+  if (!state.sessions.some((s) => s.session_id === sessionId)) {
+    state.activeMessages = [];
+    setHeaderTitle();
+    renderChatList(state.sessions);
+    renderMessages(state.activeMessages);
+    ui.input?.focus();
+    return;
+  }
+
+  const data = await fetchJson(`/app/api/sessions/${encodeURIComponent(sessionId)}?limit=200`);
+  state.activeMessages = data.messages || [];
+
+  setHeaderTitle();
+  renderChatList(state.sessions);
+  renderMessages(state.activeMessages);
+  autosizeTextarea();
+  ui.input?.focus();
+}
+
+function updateLastAssistantBubble(acc) {
+  const last = ui.messages?.lastElementChild;
+  const inner = last?.firstElementChild;
+  const body = inner?.querySelector?.(".messageBody") || inner;
+  if (body) body.innerHTML = renderMarkdown(acc);
+  if (ui.messages) ui.messages.scrollTop = ui.messages.scrollHeight;
+}
+
+function _csvToList(s) {
+  return (s || "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
 function buildMetadataFilters() {
   const filters = {};
-
-  const title = (metaTitleEl?.value || "").trim();
+  const title = (ui.metaTitle?.value || "").trim();
   if (title) filters.title = title;
 
-  const tags = _csvToList(metaTagsEl?.value || "");
+  const tags = _csvToList(ui.metaTags?.value || "");
   if (tags.length) filters.tags = tags;
-
-  // Keep these values available for future backend range support, but do not send them yet
-  // to avoid breaking FAISS exact-match filtering.
-  // const wMin = (metaWordMinEl?.value || "").trim();
-  // const wMax = (metaWordMaxEl?.value || "").trim();
-  // const cFrom = (metaCreatedFromEl?.value || "").trim();
-  // const cTo = (metaCreatedToEl?.value || "").trim();
-  // const mFrom = (metaModifiedFromEl?.value || "").trim();
-  // const mTo = (metaModifiedToEl?.value || "").trim();
 
   return filters;
 }
 
-// Build filters_json payload for persistence/auditing (section -> selected options list)
-// This is separate from `filters` (doc retrieval filters).
 function buildFiltersJson() {
   const out = {};
-
-  // Right sidebar tools
-  const tools = getSelectedTools();
-  out.TOOLS = Array.isArray(tools) ? tools.slice() : [];
-
-  // Placeholder section (kept for UI parity even if empty today)
+  out.TOOLS = getSelectedTools().slice();
   out.PLACEHOLDER = [];
 
-  // Metadata section (store as a list of key=value strings to preserve what the user selected)
-  const meta = buildMetadataFilters();
   const metaList = [];
-  Object.entries(meta || {}).forEach(([k, v]) => {
+  Object.entries(buildMetadataFilters()).forEach(([k, v]) => {
     if (v == null) return;
     if (Array.isArray(v)) {
       if (v.length) metaList.push(`${k}=${v.join(",")}`);
@@ -721,6 +602,15 @@ function buildFiltersJson() {
   return out;
 }
 
+function getSelectedTools() {
+  const arr = loadJsonLS(LS.SELECTED_TOOLS, []);
+  return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+}
+
+function setSelectedTools(arr) {
+  saveJsonLS(LS.SELECTED_TOOLS, Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : []);
+}
+
 function streamAnswer(userText, fileIds = []) {
   const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
   const fileParam = ids.length ? `&file_ids=${encodeURIComponent(ids.join(","))}` : "";
@@ -728,153 +618,98 @@ function streamAnswer(userText, fileIds = []) {
   const tools = getSelectedTools();
   const toolsParam = tools.length ? `&tools=${encodeURIComponent(tools.join(","))}` : "";
 
-  // Retrieval filters (used by backend for doc filtering)
   const metaFilters = buildMetadataFilters();
   const filtersParam = Object.keys(metaFilters).length
     ? `&filters=${encodeURIComponent(JSON.stringify(metaFilters))}`
     : "";
 
-  // Persistence filters_json (section -> selected list)
   const filtersJson = buildFiltersJson();
   const filtersJsonParam = Object.keys(filtersJson).length
     ? `&filters_json=${encodeURIComponent(JSON.stringify(filtersJson))}`
     : "";
 
-  // Project context (from session meta -> projects list)
   let projectId = "";
   let projectName = "";
   try {
-    const m = getMeta(activeSessionId);
+    const m = getMeta(state.activeSessionId);
     projectId = (m.projectId || "").trim();
     if (projectId) {
-      const p = (loadProjects() || []).find((x) => (x.id || "") === projectId);
+      const p = loadProjects().find((x) => (x.id || "") === projectId);
       projectName = (p?.name || "").trim();
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
+
   const projectIdParam = projectId ? `&project_id=${encodeURIComponent(projectId)}` : "";
   const projectNameParam = projectName ? `&project_name=${encodeURIComponent(projectName)}` : "";
 
-  const model = (() => {
-    try { return (localStorage.getItem(LS_MODEL) || "").trim(); } catch { return ""; }
-  })();
+  const model = (getLsValue(LS.MODEL, "") || "").trim();
   const modelParam = model ? `&model=${encodeURIComponent(model)}` : "";
 
-  const url = `/app/chat/stream?message=${encodeURIComponent(
-    userText
-  )}&session_id=${encodeURIComponent(activeSessionId)}${fileParam}${toolsParam}${filtersParam}${filtersJsonParam}${projectIdParam}${projectNameParam}${modelParam}`;
+  const url = `/app/chat/stream?message=${encodeURIComponent(userText)}&session_id=${encodeURIComponent(state.activeSessionId)}${fileParam}${toolsParam}${filtersParam}${filtersJsonParam}${projectIdParam}${projectNameParam}${modelParam}`;
   const es = new EventSource(url);
 
   let acc = "";
   let steps = [];
-  let sources = [];
   let traceId = "";
 
   es.addEventListener("error", () => {
     es.close();
     acc += "\n[stream error]";
-
-    const lastIdx = activeMessages.length - 1;
-    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
-      activeMessages[lastIdx].content = acc;
+    const lastIdx = state.activeMessages.length - 1;
+    if (lastIdx >= 0 && state.activeMessages[lastIdx].role === "assistant") {
+      state.activeMessages[lastIdx].content = acc;
     }
     updateLastAssistantBubble(acc);
   });
-
 
   es.addEventListener("meta", (evt) => {
     try {
       const obj = JSON.parse(evt.data || "{}");
       traceId = obj.trace_id || "";
       setStepsMeta(traceId);
-    } catch {
-      // ignore
-    }
+    } catch {}
   });
 
   es.addEventListener("sources", (evt) => {
     try {
-      sources = JSON.parse(evt.data || "[]");
-      renderSources(sources);
-    } catch {
-      // ignore malformed sources
-    }
+      renderSources(JSON.parse(evt.data || "[]"));
+    } catch {}
   });
 
   es.addEventListener("token", (evt) => {
     const chunk = (evt.data || "").replaceAll("\\n", "\n");
     acc += chunk;
-
-    const lastIdx = activeMessages.length - 1;
-    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
-      activeMessages[lastIdx].content = acc;
+    const lastIdx = state.activeMessages.length - 1;
+    if (lastIdx >= 0 && state.activeMessages[lastIdx].role === "assistant") {
+      state.activeMessages[lastIdx].content = acc;
     }
-
     updateLastAssistantBubble(acc);
   });
 
   es.addEventListener("step", (evt) => {
     try {
-      const s = JSON.parse(evt.data || "{}");
-      steps.push(s);
+      steps.push(JSON.parse(evt.data || "{}"));
       renderSteps(steps);
-    } catch {
-      // ignore malformed step
-    }
+    } catch {}
   });
 
-  // Backwards compatibility: if server sends default "message" events with data
   es.onmessage = (evt) => {
     const chunk = (evt.data || "").replaceAll("\\n", "\n");
     if (!chunk) return;
     acc += chunk;
-
-    const lastIdx = activeMessages.length - 1;
-    if (lastIdx >= 0 && activeMessages[lastIdx].role === "assistant") {
-      activeMessages[lastIdx].content = acc;
+    const lastIdx = state.activeMessages.length - 1;
+    if (lastIdx >= 0 && state.activeMessages[lastIdx].role === "assistant") {
+      state.activeMessages[lastIdx].content = acc;
     }
-
     updateLastAssistantBubble(acc);
   };
 
   es.addEventListener("end", async () => {
     es.close();
-
-    // On completion, refresh sidebar list so the session appears / title updates
     try {
       await refreshSessionsListOnly();
-    } catch {
-      // non-fatal
-    }
+    } catch {}
   });
-}
-
-function sendCurrent() {
-  const txt = (inputEl?.value || "").trim();
-  if (!txt) return;
-
-  const fileIds = (pendingAttachments || []).map((x) => x.id).filter(Boolean);
-
-  inputEl.value = "";
-  autosizeTextarea();
-
-  // optimistic UI append
-  activeMessages = activeMessages || [];
-  activeMessages.push({ role: "user", content: txt, ts: nowIso() });
-  activeMessages.push({ role: "assistant", content: "", ts: nowIso() });
-
-  // render immediately
-  setHeaderTitle();
-  renderMessages(activeMessages);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-
-  // clear attachments after the message is sent
-  pendingAttachments = [];
-  renderAttachmentStrip();
-
-  // stream server response (server persists to DynamoDB)
-  streamAnswer(txt, fileIds);
 }
 
 function nowIso() {
@@ -889,47 +724,29 @@ function esc(s) {
 }
 
 function renderMarkdown(md) {
-  // Minimal, safe markdown: escape HTML first, then apply a small subset.
   let s = esc(md || "");
-
-  // code fences ```...```
   s = s.replace(/```([\s\S]*?)```/g, (m, code) => {
     const c = code.replace(/^[\n\r]+|[\n\r]+$/g, "");
     return `<pre class="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3 overflow-x-auto"><code>${c}</code></pre>`;
   });
-
-  // inline code `...`
-  s = s.replace(/`([^`]+?)`/g, (m, code) => {
-    return `<code class="rounded bg-slate-100 px-1 py-0.5">${code}</code>`;
-  });
-
-  // bold **...**
+  s = s.replace(/`([^`]+?)`/g, (m, code) => `<code class="rounded bg-slate-100 px-1 py-0.5">${code}</code>`);
   s = s.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>");
-
-  // italic *...* (simple)
   s = s.replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, "$1<em>$2</em>");
-
-  // links [text](url)
-  s = s.replace(/\[([^\]]+?)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline">$1</a>'
-  );
-
-  // newlines
-  s = s.replace(/\n/g, "<br/>");
-  return s;
+  s = s.replace(/\[([^\]]+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline">$1</a>');
+  return s.replace(/\n/g, "<br/>");
 }
 
 function renderAttachmentStrip() {
-  if (!attachmentStripEl) return;
-  const list = pendingAttachments || [];
+  if (!ui.attachmentStrip) return;
+  const list = state.pendingAttachments || [];
   if (!list.length) {
-    attachmentStripEl.classList.add("hidden");
-    attachmentStripEl.innerHTML = "";
+    ui.attachmentStrip.classList.add("hidden");
+    ui.attachmentStrip.innerHTML = "";
     return;
   }
 
-  attachmentStripEl.classList.remove("hidden");
-  attachmentStripEl.innerHTML = "";
+  ui.attachmentStrip.classList.remove("hidden");
+  ui.attachmentStrip.innerHTML = "";
 
   list.forEach((f) => {
     const chip = document.createElement("div");
@@ -945,13 +762,12 @@ function renderAttachmentStrip() {
     x.textContent = "×";
     x.setAttribute("aria-label", "Remove attachment");
     x.addEventListener("click", () => {
-      pendingAttachments = (pendingAttachments || []).filter((a) => a.id !== f.id);
+      state.pendingAttachments = state.pendingAttachments.filter((a) => a.id !== f.id);
       renderAttachmentStrip();
     });
 
-    chip.appendChild(name);
-    chip.appendChild(x);
-    attachmentStripEl.appendChild(chip);
+    chip.append(name, x);
+    ui.attachmentStrip.appendChild(chip);
   });
 }
 
@@ -962,12 +778,8 @@ async function uploadSelectedFiles(fileList) {
   const fd = new FormData();
   files.forEach((file) => fd.append("files", file, file.name));
 
-  const url = `/app/api/files?session_id=${encodeURIComponent(activeSessionId)}`;
-  const r = await fetch(url, {
-    method: "POST",
-    body: fd,
-    credentials: "same-origin",
-  });
+  const url = `/app/api/files?session_id=${encodeURIComponent(state.activeSessionId)}`;
+  const r = await fetch(url, { method: "POST", body: fd, credentials: "same-origin" });
 
   if (!r.ok) {
     const t = await r.text().catch(() => "");
@@ -976,36 +788,36 @@ async function uploadSelectedFiles(fileList) {
 
   const data = await r.json();
   const returned = Array.isArray(data.files) ? data.files : [];
+  const byId = new Map((state.pendingAttachments || []).map((x) => [x.id, x]));
 
-  // merge (avoid duplicates by id)
-  const byId = new Map((pendingAttachments || []).map((x) => [x.id, x]));
   returned.forEach((f) => {
     if (!f || !f.id) return;
     byId.set(f.id, { id: f.id, name: f.name || "file", size: f.size || 0 });
   });
-  pendingAttachments = Array.from(byId.values());
+
+  state.pendingAttachments = Array.from(byId.values());
   renderAttachmentStrip();
 }
 
 function renderProjects() {
-  if (!projectListEl) return;
+  if (!ui.projectList) return;
   const projects = loadProjects().slice().sort((a, b) => (b.created_ts || 0) - (a.created_ts || 0));
-  projectListEl.innerHTML = "";
+  ui.projectList.innerHTML = "";
 
   function addBtn(label, id) {
     const b = document.createElement("button");
     b.type = "button";
-    const active = selectedProjectId === id;
+    const active = state.selectedProjectId === id;
     b.className =
       "w-full truncate rounded-lg px-3 py-2 text-left text-sm border transition " +
       (active ? "chatitem-active" : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50");
     b.textContent = label;
     b.addEventListener("click", () => {
-      selectedProjectId = id;
+      state.selectedProjectId = id;
       renderProjects();
-      renderChatList(sessions);
+      renderChatList(state.sessions);
     });
-    projectListEl.appendChild(b);
+    ui.projectList.appendChild(b);
   }
 
   addBtn("All", "all");
@@ -1026,66 +838,33 @@ function createProject() {
   return p;
 }
 
-newChatBtn?.addEventListener("click", async () => {
-  // Create a new client-side session id and reset UI.
-  // It will appear in DynamoDB after the first message is sent.
-  activeSessionId = newSessionId();
-  activeMessages = [];
-  pendingAttachments = [];
-  renderAttachmentStrip();
+function sendCurrent() {
+  const txt = (ui.input?.value || "").trim();
+  if (!txt) return;
+
+  const fileIds = state.pendingAttachments.map((x) => x.id).filter(Boolean);
+  if (ui.input) ui.input.value = "";
+  autosizeTextarea();
+
+  state.activeMessages.push({ role: "user", content: txt, ts: nowIso() });
+  state.activeMessages.push({ role: "assistant", content: "", ts: nowIso() });
+
   setHeaderTitle();
-  renderChatList(sessions);
-  renderMessages(activeMessages);
-  inputEl?.focus();
-});
+  renderMessages(state.activeMessages);
+  if (ui.messages) ui.messages.scrollTop = ui.messages.scrollHeight;
 
-newProjectBtn?.addEventListener("click", (e) => {
-  e.preventDefault();
-  createProject();
-});
-
-chatSearchEl?.addEventListener("input", () => {
-  renderChatList(sessions);
-});
-
-sendBtn?.addEventListener("click", sendCurrent);
-
-attachBtn?.addEventListener("click", (e) => {
-  e.preventDefault();
-  fileInputEl?.click();
-});
-
-fileInputEl?.addEventListener("change", async () => {
-  try {
-    await uploadSelectedFiles(fileInputEl.files);
-  } catch (err) {
-    alert("Upload failed: " + (err?.message || err));
-  } finally {
-    // allow picking the same file again
-    if (fileInputEl) fileInputEl.value = "";
-  }
-});
-
-inputEl?.addEventListener("input", autosizeTextarea);
-
-inputEl?.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendCurrent();
-  }
-});
+  state.pendingAttachments = [];
+  renderAttachmentStrip();
+  streamAnswer(txt, fileIds);
+}
 
 function setActiveChoice(buttons, predicate) {
   (buttons || []).forEach((b) => {
-    const on = predicate(b);
-    b.setAttribute("aria-pressed", on ? "true" : "false");
-    b.classList.toggle("ring-2", on);
-    b.classList.toggle("ring-slate-400", on);
+    const onState = predicate(b);
+    b.setAttribute("aria-pressed", onState ? "true" : "false");
+    b.classList.toggle("ring-2", onState);
+    b.classList.toggle("ring-slate-400", onState);
   });
-}
-
-function getSystemMode() {
-  return "light";
 }
 
 function applyAppearance(_pref) {
@@ -1094,370 +873,216 @@ function applyAppearance(_pref) {
   document.documentElement.dataset.mode = mode;
   document.documentElement.style.colorScheme = mode;
 
-  // remove any previous system listener
-  if (systemMq) {
-    try { systemMq.onchange = null; } catch {}
-    systemMq = null;
+  if (state.systemMq) {
+    try {
+      state.systemMq.onchange = null;
+    } catch {}
+    state.systemMq = null;
   }
 
-  // ensure any leftover UI buttons don't show as active
-  setActiveChoice(document.querySelectorAll(".appearanceOpt"), () => false);
+  setActiveChoice(qsa(".appearanceOpt"), () => false);
 }
 
 function applyBackground(bg) {
-  const b = (bg || "").trim() || "matching";
-  try { localStorage.setItem(LS_BG, b); } catch {}
-  document.documentElement.dataset.bg = b;
-  setActiveChoice(document.querySelectorAll(".bgOpt"), (x) => (x.dataset.bg || "") === b);
+  const next = (bg || "").trim() || "matching";
+  setLsValue(LS.BG, next);
+  document.documentElement.dataset.bg = next;
+  setActiveChoice(qsa(".bgOpt"), (x) => (x.dataset.bg || "") === next);
 }
 
 function applyTheme(t) {
-  const theme = (t || "").trim() || "slate";
+  const theme = (t || "").trim() || DEFAULTS.THEME;
   document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem(LS_THEME, theme);
-  } catch {}
-  if (themeLabelEl) {
-    themeLabelEl.textContent = theme[0].toUpperCase() + theme.slice(1);
-  }
-  setActiveChoice(document.querySelectorAll(".themeOpt"), (b) => (b.dataset.theme || "") === theme);
-}
-
-function loadJsonLS(key, fallback) {
-  try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; } catch { return fallback; }
-}
-function saveJsonLS(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} }
-
-function getSelectedTools() {
-  const arr = loadJsonLS(LS_SELECTED_TOOLS, []);
-  return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
-}
-function setSelectedTools(arr) {
-  const clean = Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
-  saveJsonLS(LS_SELECTED_TOOLS, clean);
+  setLsValue(LS.THEME, theme);
+  if (ui.themeLabel) ui.themeLabel.textContent = theme[0].toUpperCase() + theme.slice(1);
+  setActiveChoice(qsa(".themeOpt"), (b) => (b.dataset.theme || "") === theme);
 }
 
 function syncToolCheckboxesFromState() {
   const sel = new Set(getSelectedTools());
-  if (toolDbEl) toolDbEl.checked = sel.has("database");
-  if (toolPlaceholder1El) toolPlaceholder1El.checked = sel.has("placeholder1");
-  if (placeholderAEl) placeholderAEl.checked = sel.has("placeholderA");
-  if (placeholderBEl) placeholderBEl.checked = sel.has("placeholderB");
+  if (ui.toolDb) ui.toolDb.checked = sel.has("database");
+  if (ui.toolPlaceholder1) ui.toolPlaceholder1.checked = sel.has("placeholder1");
+  if (ui.placeholderA) ui.placeholderA.checked = sel.has("placeholderA");
+  if (ui.placeholderB) ui.placeholderB.checked = sel.has("placeholderB");
 }
+
 function readToolCheckboxesToState() {
   const next = [];
-  if (toolDbEl?.checked) next.push("database");
-  if (toolPlaceholder1El?.checked) next.push("placeholder1");
-  if (placeholderAEl?.checked) next.push("placeholderA");
-  if (placeholderBEl?.checked) next.push("placeholderB");
+  if (ui.toolDb?.checked) next.push("database");
+  if (ui.toolPlaceholder1?.checked) next.push("placeholder1");
+  if (ui.placeholderA?.checked) next.push("placeholderA");
+  if (ui.placeholderB?.checked) next.push("placeholderB");
   setSelectedTools(next);
   return next;
 }
 
 function openRightbar() {
-  if (!rightbarEl) return;
-  rightbarEl.classList.remove("hidden");
-  rightbarEl.classList.add("flex");
-  // If previously collapsed on desktop, expand it when opening
+  if (!ui.rightbar) return;
+  ui.rightbar.classList.remove("hidden");
+  ui.rightbar.classList.add("flex");
   setRightbarCollapsed(false);
-  rightbarBackdropEl?.classList.remove("hidden");
-  saveJsonLS(LS_RIGHTBAR, { open: true });
+  ui.rightbarBackdrop?.classList.remove("hidden");
+  saveJsonLS(LS.RIGHTBAR, { open: true });
 }
+
 function closeRightbar() {
-  if (!rightbarEl) return;
-  // only hide on mobile
-  if (window.matchMedia && window.matchMedia("(min-width: 768px)").matches) {
-    rightbarBackdropEl?.classList.add("hidden");
-    saveJsonLS(LS_RIGHTBAR, { open: false });
+  if (!ui.rightbar) return;
+  if (window.matchMedia?.("(min-width: 768px)").matches) {
+    ui.rightbarBackdrop?.classList.add("hidden");
+    saveJsonLS(LS.RIGHTBAR, { open: false });
     return;
   }
-  rightbarEl.classList.add("hidden");
-  rightbarEl.classList.remove("flex");
-  rightbarBackdropEl?.classList.add("hidden");
-  saveJsonLS(LS_RIGHTBAR, { open: false });
+  ui.rightbar.classList.add("hidden");
+  ui.rightbar.classList.remove("flex");
+  ui.rightbarBackdrop?.classList.add("hidden");
+  saveJsonLS(LS.RIGHTBAR, { open: false });
 }
 
 function setRightbarCollapsed(collapsed) {
-  if (!rightbarEl) return;
+  if (!ui.rightbar) return;
 
   if (collapsed) {
-    rightbarEl.classList.add("rightbar-collapsed");
-    rightbarEl.classList.add("is-collapsed");
+    ui.rightbar.classList.add("rightbar-collapsed", "is-collapsed");
     document.body.classList.add("rightbar-collapsed");
 
-    // Save inline styles so we can restore on expand
-    rightbarEl.dataset._prevWidth = rightbarEl.style.width || "";
-    rightbarEl.dataset._prevMinWidth = rightbarEl.style.minWidth || "";
-    rightbarEl.dataset._prevMaxWidth = rightbarEl.style.maxWidth || "";
-    rightbarEl.dataset._prevFlex = rightbarEl.style.flex || "";
-    rightbarEl.dataset._prevFlexBasis = rightbarEl.style.flexBasis || "";
-    rightbarEl.dataset._prevPadding = rightbarEl.style.padding || "";
-    rightbarEl.dataset._prevBorderWidth = rightbarEl.style.borderWidth || "";
-    rightbarEl.dataset._prevOverflow = rightbarEl.style.overflow || "";
+    ui.rightbar.dataset._prevWidth = ui.rightbar.style.width || "";
+    ui.rightbar.dataset._prevMinWidth = ui.rightbar.style.minWidth || "";
+    ui.rightbar.dataset._prevMaxWidth = ui.rightbar.style.maxWidth || "";
+    ui.rightbar.dataset._prevFlex = ui.rightbar.style.flex || "";
+    ui.rightbar.dataset._prevFlexBasis = ui.rightbar.style.flexBasis || "";
+    ui.rightbar.dataset._prevPadding = ui.rightbar.style.padding || "";
+    ui.rightbar.dataset._prevBorderWidth = ui.rightbar.style.borderWidth || "";
+    ui.rightbar.dataset._prevOverflow = ui.rightbar.style.overflow || "";
 
-    // Collapse fully on desktop; the header toggle button outside the sidebar remains visible.
-    rightbarEl.style.width = "0";
-    rightbarEl.style.minWidth = "0";
-    rightbarEl.style.maxWidth = "0";
-    rightbarEl.style.flex = "0 0 0";
-    rightbarEl.style.flexBasis = "0";
-    rightbarEl.style.padding = "0";
-    rightbarEl.style.borderWidth = "0";
-    rightbarEl.style.overflow = "hidden";
+    ui.rightbar.style.width = "0";
+    ui.rightbar.style.minWidth = "0";
+    ui.rightbar.style.maxWidth = "0";
+    ui.rightbar.style.flex = "0 0 0";
+    ui.rightbar.style.flexBasis = "0";
+    ui.rightbar.style.padding = "0";
+    ui.rightbar.style.borderWidth = "0";
+    ui.rightbar.style.overflow = "hidden";
 
-    // Ensure the desktop toggle stays visible/clickable
-    const toggleBtn = document.getElementById("rightbarToggleDesktop");
+    const toggleBtn = $("rightbarToggleDesktop");
     if (toggleBtn) {
       toggleBtn.style.visibility = "visible";
       toggleBtn.style.display = "inline-flex";
     }
-  } else {
-    rightbarEl.classList.remove("rightbar-collapsed");
-    rightbarEl.classList.remove("is-collapsed");
-    document.body.classList.remove("rightbar-collapsed");
-
-    // Restore inline styles
-    rightbarEl.style.width = rightbarEl.dataset._prevWidth || "";
-    rightbarEl.style.minWidth = rightbarEl.dataset._prevMinWidth || "";
-    rightbarEl.style.maxWidth = rightbarEl.dataset._prevMaxWidth || "";
-    rightbarEl.style.flex = rightbarEl.dataset._prevFlex || "";
-    rightbarEl.style.flexBasis = rightbarEl.dataset._prevFlexBasis || "";
-    rightbarEl.style.padding = rightbarEl.dataset._prevPadding || "";
-    rightbarEl.style.borderWidth = rightbarEl.dataset._prevBorderWidth || "";
-    rightbarEl.style.overflow = rightbarEl.dataset._prevOverflow || "";
-
-    delete rightbarEl.dataset._prevWidth;
-    delete rightbarEl.dataset._prevMinWidth;
-    delete rightbarEl.dataset._prevMaxWidth;
-    delete rightbarEl.dataset._prevFlex;
-    delete rightbarEl.dataset._prevFlexBasis;
-    delete rightbarEl.dataset._prevPadding;
-    delete rightbarEl.dataset._prevBorderWidth;
-    delete rightbarEl.dataset._prevOverflow;
+    return;
   }
+
+  ui.rightbar.classList.remove("rightbar-collapsed", "is-collapsed");
+  document.body.classList.remove("rightbar-collapsed");
+
+  ui.rightbar.style.width = ui.rightbar.dataset._prevWidth || "";
+  ui.rightbar.style.minWidth = ui.rightbar.dataset._prevMinWidth || "";
+  ui.rightbar.style.maxWidth = ui.rightbar.dataset._prevMaxWidth || "";
+  ui.rightbar.style.flex = ui.rightbar.dataset._prevFlex || "";
+  ui.rightbar.style.flexBasis = ui.rightbar.dataset._prevFlexBasis || "";
+  ui.rightbar.style.padding = ui.rightbar.dataset._prevPadding || "";
+  ui.rightbar.style.borderWidth = ui.rightbar.dataset._prevBorderWidth || "";
+  ui.rightbar.style.overflow = ui.rightbar.dataset._prevOverflow || "";
+
+  delete ui.rightbar.dataset._prevWidth;
+  delete ui.rightbar.dataset._prevMinWidth;
+  delete ui.rightbar.dataset._prevMaxWidth;
+  delete ui.rightbar.dataset._prevFlex;
+  delete ui.rightbar.dataset._prevFlexBasis;
+  delete ui.rightbar.dataset._prevPadding;
+  delete ui.rightbar.dataset._prevBorderWidth;
+  delete ui.rightbar.dataset._prevOverflow;
 }
 
 function initRightbarControls() {
-  // collapsed by default
   closeRightbar();
 
-  const st = loadJsonLS(LS_RIGHTBAR, { open: false });
+  const st = loadJsonLS(LS.RIGHTBAR, { open: false });
   if (st?.open) openRightbar();
-
-  // Desktop collapsed state
-  if (window.matchMedia && window.matchMedia("(min-width: 768px)").matches) {
-    setRightbarCollapsed(!st?.open);
-  }
+  if (window.matchMedia?.("(min-width: 768px)").matches) setRightbarCollapsed(!st?.open);
 
   syncToolCheckboxesFromState();
 
-  rightbarToggleEl?.addEventListener("click", (e) => {
+  on(ui.rightbarToggle, "click", (e) => {
     e.preventDefault();
-    const isHidden = rightbarEl?.classList.contains("hidden");
-    if (isHidden) openRightbar();
+    if (ui.rightbar?.classList.contains("hidden")) openRightbar();
     else closeRightbar();
   });
-  rightbarCloseEl?.addEventListener("click", (e) => { e.preventDefault(); closeRightbar(); });
-  rightbarBackdropEl?.addEventListener("click", () => closeRightbar());
-
-  rightbarToggleDesktopEl?.addEventListener("click", (e) => {
+  on(ui.rightbarClose, "click", (e) => {
     e.preventDefault();
+    closeRightbar();
+  });
+  on(ui.rightbarBackdrop, "click", () => closeRightbar());
 
-    // Desktop: collapse/expand the right sidebar without hiding it entirely.
-    const collapsed = rightbarEl?.classList.contains("rightbar-collapsed");
+  on(ui.rightbarToggleDesktop, "click", (e) => {
+    e.preventDefault();
+    const collapsed = ui.rightbar?.classList.contains("rightbar-collapsed");
     if (collapsed) {
       setRightbarCollapsed(false);
-      saveJsonLS(LS_RIGHTBAR, { open: true });
-    } else {
-      setRightbarCollapsed(true);
-      // Ensure mobile backdrop is hidden
-      rightbarBackdropEl?.classList.add("hidden");
-      saveJsonLS(LS_RIGHTBAR, { open: false });
+      saveJsonLS(LS.RIGHTBAR, { open: true });
+      return;
     }
+    setRightbarCollapsed(true);
+    ui.rightbarBackdrop?.classList.add("hidden");
+    saveJsonLS(LS.RIGHTBAR, { open: false });
   });
 
-  [toolDbEl, toolPlaceholder1El, placeholderAEl, placeholderBEl].forEach((x) => {
-    x?.addEventListener("change", () => { readToolCheckboxesToState(); });
+  [ui.toolDb, ui.toolPlaceholder1, ui.placeholderA, ui.placeholderB].forEach((x) => {
+    on(x, "change", () => readToolCheckboxesToState());
   });
 }
 
-
 function openSidebar() {
-  if (!sidebarEl) return;
-  sidebarEl.classList.remove("hidden");
-  sidebarEl.classList.add("flex");
-  sidebarBackdropEl?.classList.remove("hidden");
+  if (!ui.sidebar) return;
+  ui.sidebar.classList.remove("hidden");
+  ui.sidebar.classList.add("flex");
+  ui.sidebarBackdrop?.classList.remove("hidden");
 }
 
 function closeSidebar() {
-  if (!sidebarEl) return;
-  // only hide on mobile
-  if (window.matchMedia && window.matchMedia("(min-width: 768px)").matches) return;
-  sidebarEl.classList.add("hidden");
-  sidebarEl.classList.remove("flex");
-  sidebarBackdropEl?.classList.add("hidden");
+  if (!ui.sidebar) return;
+  if (window.matchMedia?.("(min-width: 768px)").matches) return;
+  ui.sidebar.classList.add("hidden");
+  ui.sidebar.classList.remove("flex");
+  ui.sidebarBackdrop?.classList.add("hidden");
 }
 
 function initSidebarControls() {
-  sidebarToggleEl?.addEventListener("click", (e) => {
+  on(ui.sidebarToggle, "click", (e) => {
     e.preventDefault();
     openSidebar();
   });
-  sidebarCloseEl?.addEventListener("click", (e) => {
+  on(ui.sidebarClose, "click", (e) => {
     e.preventDefault();
     closeSidebar();
   });
-  sidebarBackdropEl?.addEventListener("click", () => closeSidebar());
+  on(ui.sidebarBackdrop, "click", () => closeSidebar());
 
-  sidebarToggleDesktopEl?.addEventListener("click", (e) => {
+  on(ui.sidebarToggleDesktop, "click", (e) => {
     e.preventDefault();
-    sidebarEl?.classList.toggle("sidebar-collapsed");
-    document.body.classList.toggle(
-      "sidebar-collapsed",
-      sidebarEl?.classList.contains("sidebar-collapsed")
-    );
+    ui.sidebar?.classList.toggle("sidebar-collapsed");
+    document.body.classList.toggle("sidebar-collapsed", ui.sidebar?.classList.contains("sidebar-collapsed"));
   });
-  
+
   document.addEventListener("click", (e) => {
     const t = e.target;
     if (t && (t.closest?.(".chatMenu") || t.closest?.(".chatMenuSub") || t.closest?.(".chatMenuBtn"))) return;
-    document.querySelectorAll(".chatMenu").forEach((m) => m.classList.add("hidden"));
-    document.querySelectorAll(".chatMenuSub").forEach((m) => m.classList.add("hidden"));
+    qsa(".chatMenu").forEach((m) => m.classList.add("hidden"));
+    qsa(".chatMenuSub").forEach((m) => m.classList.add("hidden"));
   });
 }
 
 function openSettingsModal() {
-  if (!settingsModalEl) return;
-  settingsModalEl.classList.remove("hidden");
-  settingsModalEl.setAttribute("aria-hidden", "false");
-  centerSettingsDialog();
+  if (!ui.settingsModal) return;
+  ui.settingsModal.classList.remove("hidden");
+  ui.settingsModal.setAttribute("aria-hidden", "false");
   populateModelSelect();
 }
 
 function closeSettingsModal() {
-  if (!settingsModalEl) return;
-  settingsModalEl.classList.add("hidden");
-  settingsModalEl.setAttribute("aria-hidden", "true");
+  if (!ui.settingsModal) return;
+  ui.settingsModal.classList.add("hidden");
+  ui.settingsModal.setAttribute("aria-hidden", "true");
 }
-
-function centerSettingsDialog() {
-  if (!settingsDialogEl) return;
-
-  const prevVisibility = settingsDialogEl.style.visibility;
-  settingsDialogEl.style.visibility = "hidden";
-  settingsDialogEl.style.transform = "none";
-  settingsDialogEl.style.left = "0px";
-  settingsDialogEl.style.top = "0px";
-
-  const rect = settingsDialogEl.getBoundingClientRect();
-  const left = Math.max(8, Math.round((window.innerWidth - rect.width) / 2));
-  const top = Math.max(8, Math.round((window.innerHeight - rect.height) / 2));
-
-  settingsDialogEl.style.left = `${left}px`;
-  settingsDialogEl.style.top = `${top}px`;
-  settingsDialogEl.style.transform = "none";
-  settingsDialogEl.style.visibility = prevVisibility || "";
-}
-
-function clampSettingsDialogPosition(left, top) {
-  if (!settingsDialogEl) return { left, top };
-
-  const rect = settingsDialogEl.getBoundingClientRect();
-  const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
-  const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
-
-  return {
-    left: Math.min(Math.max(8, left), maxLeft),
-    top: Math.min(Math.max(8, top), maxTop),
-  };
-}
-
-function initSettingsDialogDrag() {
-  if (!settingsDialogEl || !settingsDialogHeaderEl) return;
-
-  let dragging = false;
-  let pendingDrag = false;
-  let startClientX = 0;
-  let startClientY = 0;
-  let originLeft = 0;
-  let originTop = 0;
-
-  const DRAG_THRESHOLD_PX = 4;
-
-  const stopDragging = () => {
-    dragging = false;
-    pendingDrag = false;
-    document.body.classList.remove("settings-dragging");
-  };
-
-  settingsDialogHeaderEl.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    if (e.target && e.target.closest('[data-close="settings"]')) return;
-
-    const rect = settingsDialogEl.getBoundingClientRect();
-    const inlineLeft = parseFloat(settingsDialogEl.style.left || "");
-    const inlineTop = parseFloat(settingsDialogEl.style.top || "");
-
-    pendingDrag = true;
-    dragging = false;
-    startClientX = e.clientX;
-    startClientY = e.clientY;
-    originLeft = Number.isFinite(inlineLeft) ? inlineLeft : rect.left;
-    originTop = Number.isFinite(inlineTop) ? inlineTop : rect.top;
-
-    e.preventDefault();
-  });
-
-  document.addEventListener("mousemove", (e) => {
-    if (!pendingDrag && !dragging) return;
-
-    const movedX = e.clientX - startClientX;
-    const movedY = e.clientY - startClientY;
-
-    if (!dragging) {
-      if (Math.abs(movedX) < DRAG_THRESHOLD_PX && Math.abs(movedY) < DRAG_THRESHOLD_PX) {
-        return;
-      }
-
-      settingsDialogEl.style.transform = "none";
-      settingsDialogEl.style.left = `${originLeft}px`;
-      settingsDialogEl.style.top = `${originTop}px`;
-
-      dragging = true;
-      pendingDrag = false;
-      document.body.classList.add("settings-dragging");
-    }
-
-    const nextLeft = originLeft + movedX;
-    const nextTop = originTop + movedY;
-    const clamped = clampSettingsDialogPosition(nextLeft, nextTop);
-
-    settingsDialogEl.style.left = `${clamped.left}px`;
-    settingsDialogEl.style.top = `${clamped.top}px`;
-  });
-
-  document.addEventListener("mouseup", () => {
-    stopDragging();
-  });
-
-  window.addEventListener("resize", () => {
-    if (!settingsModalEl || settingsModalEl.classList.contains("hidden")) return;
-
-    const left = parseFloat(settingsDialogEl.style.left || "0");
-    const top = parseFloat(settingsDialogEl.style.top || "0");
-
-    if (!Number.isFinite(left) || !Number.isFinite(top) || (left === 0 && top === 0)) {
-      centerSettingsDialog();
-      return;
-    }
-
-    const clamped = clampSettingsDialogPosition(left, top);
-    settingsDialogEl.style.left = `${clamped.left}px`;
-    settingsDialogEl.style.top = `${clamped.top}px`;
-    settingsDialogEl.style.transform = "none";
-  });
-}
-
 
 function normalizeHexColor(value, fallback) {
   const raw = String(value || "").trim();
@@ -1470,49 +1095,77 @@ function normalizeHexColor(value, fallback) {
 }
 
 function applyCustomColors(accent, toggleBg, chatBg) {
-  const nextAccent = normalizeHexColor(accent, DEFAULT_ACCENT);
-  const nextToggleBg = normalizeHexColor(toggleBg, DEFAULT_TOGGLE_BG);
-  const nextChatBg = normalizeHexColor(chatBg, DEFAULT_CHAT_BG);
+  const nextAccent = normalizeHexColor(accent, DEFAULTS.ACCENT);
+  const nextToggleBg = normalizeHexColor(toggleBg, DEFAULTS.TOGGLE_BG);
+  const nextChatBg = normalizeHexColor(chatBg, DEFAULTS.CHAT_BG);
 
-  if (accentHexEl) accentHexEl.value = nextAccent;
-  if (accentPickerEl) accentPickerEl.value = nextAccent;
-  if (toggleBgHexEl) toggleBgHexEl.value = nextToggleBg;
-  if (toggleBgPickerEl) toggleBgPickerEl.value = nextToggleBg;
-  if (chatBgHexEl) chatBgHexEl.value = nextChatBg;
-  if (chatBgPickerEl) chatBgPickerEl.value = nextChatBg;
+  if (ui.accentHex) ui.accentHex.value = nextAccent;
+  if (ui.accentPicker) ui.accentPicker.value = nextAccent;
+  if (ui.toggleBgHex) ui.toggleBgHex.value = nextToggleBg;
+  if (ui.toggleBgPicker) ui.toggleBgPicker.value = nextToggleBg;
+  if (ui.chatBgHex) ui.chatBgHex.value = nextChatBg;
+  if (ui.chatBgPicker) ui.chatBgPicker.value = nextChatBg;
 
-  try { localStorage.setItem(LS_ACCENT, nextAccent); } catch {}
-  try { localStorage.setItem(LS_TOGGLE_BG, nextToggleBg); } catch {}
-  try { localStorage.setItem(LS_CHAT_BG, nextChatBg); } catch {}
+  setLsValue(LS.ACCENT, nextAccent);
+  setLsValue(LS.TOGGLE_BG, nextToggleBg);
+  setLsValue(LS.CHAT_BG, nextChatBg);
 
   document.documentElement.style.setProperty("--accent", nextAccent);
   document.documentElement.style.setProperty("--toggle-bg", nextToggleBg);
   document.documentElement.style.setProperty("--chat-bg", nextChatBg);
 }
 
+async function fetchModels() {
+  return await fetchJson("/app/api/models");
+}
+
+async function populateModelSelect() {
+  if (!ui.modelSelect) return;
+
+  let data;
+  try {
+    data = await fetchModels();
+  } catch {
+    return;
+  }
+
+  const models = Array.isArray(data?.models)
+    ? data.models.filter((m) => typeof m === "string" && m.trim())
+    : [];
+  if (!models.length) return;
+
+  const saved = getLsValue(LS.MODEL, "");
+  const preferred = (saved || data?.default || "").trim();
+
+  ui.modelSelect.innerHTML = "";
+  models.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    ui.modelSelect.appendChild(opt);
+  });
+
+  ui.modelSelect.value = preferred && models.includes(preferred) ? preferred : models[0];
+  setLsValue(LS.MODEL, ui.modelSelect.value);
+}
+
 function initSettingsModal() {
-  initSettingsDialogDrag();
-  // initialize legacy settings (theme/appearance/bg)
-  const curTheme = (() => { try { return localStorage.getItem(LS_THEME) || "slate"; } catch { return "slate"; } })();
-  const curAppearance = "light";
-  const curBg = (() => { try { return localStorage.getItem(LS_BG) || "matching"; } catch { return "matching"; } })();
-  applyTheme(curTheme);
-  applyAppearance(curAppearance);
-  applyBackground(curBg);
+  applyTheme(getLsValue(LS.THEME, DEFAULTS.THEME));
+  applyAppearance("light");
+  applyBackground(getLsValue(LS.BG, DEFAULTS.BG));
 
-  // initialize new color pickers
-  const accent = (() => { try { return localStorage.getItem(LS_ACCENT) || DEFAULT_ACCENT; } catch { return DEFAULT_ACCENT; } })();
-  const toggleBg = (() => { try { return localStorage.getItem(LS_TOGGLE_BG) || DEFAULT_TOGGLE_BG; } catch { return DEFAULT_TOGGLE_BG; } })();
-  const chatBg = (() => { try { return localStorage.getItem(LS_CHAT_BG) || DEFAULT_CHAT_BG; } catch { return DEFAULT_CHAT_BG; } })();
-  applyCustomColors(accent, toggleBg, chatBg);
+  applyCustomColors(
+    getLsValue(LS.ACCENT, DEFAULTS.ACCENT),
+    getLsValue(LS.TOGGLE_BG, DEFAULTS.TOGGLE_BG),
+    getLsValue(LS.CHAT_BG, DEFAULTS.CHAT_BG)
+  );
 
-  settingsModalBtn?.addEventListener("click", (e) => {
+  on(ui.settingsModalBtn, "click", (e) => {
     e.preventDefault();
     openSettingsModal();
   });
 
-  // close buttons/overlay
-  settingsModalEl?.querySelectorAll('[data-close="settings"]').forEach((x) => {
+  qsa('[data-close="settings"]', ui.settingsModal || document).forEach((x) => {
     x.addEventListener("click", (e) => {
       e.preventDefault();
       closeSettingsModal();
@@ -1523,109 +1176,131 @@ function initSettingsModal() {
     if (e.key === "Escape") closeSettingsModal();
   });
 
-  // color pickers persistence
-  accentPickerEl?.addEventListener("input", () => {
+  on(ui.accentPicker, "input", () => {
     applyCustomColors(
-      accentPickerEl.value,
-      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
-      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+      ui.accentPicker.value,
+      ui.toggleBgHex?.value || ui.toggleBgPicker?.value || DEFAULTS.TOGGLE_BG,
+      ui.chatBgHex?.value || ui.chatBgPicker?.value || DEFAULTS.CHAT_BG
     );
   });
 
-  accentHexEl?.addEventListener("change", () => {
+  on(ui.accentHex, "change", () => {
     applyCustomColors(
-      accentHexEl.value,
-      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
-      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+      ui.accentHex.value,
+      ui.toggleBgHex?.value || ui.toggleBgPicker?.value || DEFAULTS.TOGGLE_BG,
+      ui.chatBgHex?.value || ui.chatBgPicker?.value || DEFAULTS.CHAT_BG
     );
   });
 
-  toggleBgPickerEl?.addEventListener("input", () => {
+  const syncToggleBg = (value) => {
     applyCustomColors(
-      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
-      toggleBgPickerEl.value,
-      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
+      ui.accentHex?.value || ui.accentPicker?.value || DEFAULTS.ACCENT,
+      value,
+      ui.chatBgHex?.value || ui.chatBgPicker?.value || DEFAULTS.CHAT_BG
     );
 
-    // toggle-bg only drives the chat surface when Background = gray
-    const cur = document.documentElement.dataset.bg || "matching";
+    const cur = document.documentElement.dataset.bg || DEFAULTS.BG;
     if (cur !== "gray") {
       applyBackground("gray");
-      try { localStorage.setItem(LS_BG, "gray"); } catch {}
-      if (themeLabelEl) themeLabelEl.textContent = "Gray";
+      setLsValue(LS.BG, "gray");
+      if (ui.themeLabel) ui.themeLabel.textContent = "Gray";
     }
-  });
+  };
 
-  toggleBgHexEl?.addEventListener("change", () => {
+  on(ui.toggleBgPicker, "input", () => syncToggleBg(ui.toggleBgPicker.value));
+  on(ui.toggleBgHex, "change", () => syncToggleBg(ui.toggleBgHex.value));
+
+  on(ui.chatBgPicker, "input", () => {
     applyCustomColors(
-      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
-      toggleBgHexEl.value,
-      chatBgHexEl?.value || chatBgPickerEl?.value || DEFAULT_CHAT_BG
-    );
-
-    const cur = document.documentElement.dataset.bg || "matching";
-    if (cur !== "gray") {
-      applyBackground("gray");
-      try { localStorage.setItem(LS_BG, "gray"); } catch {}
-      if (themeLabelEl) themeLabelEl.textContent = "Gray";
-    }
-  });
-
-  chatBgPickerEl?.addEventListener("input", () => {
-    applyCustomColors(
-      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
-      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
-      chatBgPickerEl.value
+      ui.accentHex?.value || ui.accentPicker?.value || DEFAULTS.ACCENT,
+      ui.toggleBgHex?.value || ui.toggleBgPicker?.value || DEFAULTS.TOGGLE_BG,
+      ui.chatBgPicker.value
     );
   });
 
-  chatBgHexEl?.addEventListener("change", () => {
+  on(ui.chatBgHex, "change", () => {
     applyCustomColors(
-      accentHexEl?.value || accentPickerEl?.value || DEFAULT_ACCENT,
-      toggleBgHexEl?.value || toggleBgPickerEl?.value || DEFAULT_TOGGLE_BG,
-      chatBgHexEl.value
+      ui.accentHex?.value || ui.accentPicker?.value || DEFAULTS.ACCENT,
+      ui.toggleBgHex?.value || ui.toggleBgPicker?.value || DEFAULTS.TOGGLE_BG,
+      ui.chatBgHex.value
     );
   });
 
-  restoreDefaultsBtnEl?.addEventListener("click", (e) => {
+  on(ui.restoreDefaultsBtn, "click", (e) => {
     e.preventDefault();
-    applyCustomColors(DEFAULT_ACCENT, DEFAULT_TOGGLE_BG, DEFAULT_CHAT_BG);
+    applyCustomColors(DEFAULTS.ACCENT, DEFAULTS.TOGGLE_BG, DEFAULTS.CHAT_BG);
   });
 
   document.addEventListener("change", (e) => {
-    if (e.target && e.target.matches('#rightbar input[type="date"]')) {
-      syncDateInputState();
-    }
+    if (e.target?.matches('#rightbar input[type="date"]')) syncDateInputState();
   });
-
   document.addEventListener("input", (e) => {
-    if (e.target && e.target.matches('#rightbar input[type="date"]')) {
-      syncDateInputState();
-    }
+    if (e.target?.matches('#rightbar input[type="date"]')) syncDateInputState();
   });
 
-  // Models
-  // Load saved model selection immediately (options may be populated later).
-  const savedModel = (() => { try { return localStorage.getItem(LS_MODEL) || ""; } catch { return ""; } })();
-  if (modelSelectEl && savedModel) modelSelectEl.value = savedModel;
+  const savedModel = getLsValue(LS.MODEL, "");
+  if (ui.modelSelect && savedModel) ui.modelSelect.value = savedModel;
+  on(ui.modelSelect, "change", () => setLsValue(LS.MODEL, ui.modelSelect.value));
 
-  modelSelectEl?.addEventListener("change", () => {
-    try { localStorage.setItem(LS_MODEL, modelSelectEl.value); } catch {}
-  });
-
-  // Tasks placeholder (backend wiring later)
-  scheduleTaskBtnEl?.addEventListener("click", (e) => {
+  on(ui.scheduleTaskBtn, "click", (e) => {
     e.preventDefault();
     alert("Task scheduling UI coming next.");
   });
 }
 
-(async () => {
+function bindChatControls() {
+  on(ui.newChatBtn, "click", () => {
+    state.activeSessionId = newSessionId();
+    state.activeMessages = [];
+    state.pendingAttachments = [];
+    renderAttachmentStrip();
+    setHeaderTitle();
+    renderChatList(state.sessions);
+    renderMessages(state.activeMessages);
+    ui.input?.focus();
+  });
+
+  on(ui.newProjectBtn, "click", (e) => {
+    e.preventDefault();
+    createProject();
+  });
+
+  on(ui.chatSearch, "input", () => renderChatList(state.sessions));
+  on(ui.sendBtn, "click", sendCurrent);
+
+  on(ui.attachBtn, "click", (e) => {
+    e.preventDefault();
+    ui.fileInput?.click();
+  });
+
+  on(ui.fileInput, "change", async () => {
+    try {
+      await uploadSelectedFiles(ui.fileInput.files);
+    } catch (err) {
+      alert("Upload failed: " + (err?.message || err));
+    } finally {
+      if (ui.fileInput) ui.fileInput.value = "";
+    }
+  });
+
+  on(ui.input, "input", autosizeTextarea);
+  on(ui.input, "keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendCurrent();
+    }
+  });
+}
+
+async function init() {
   autosizeTextarea();
   initSidebarControls();
   initRightbarControls();
   initSettingsModal();
+  bindChatControls();
   syncDateInputState();
   renderProjects();
   await loadSessions();
-})();
+}
+
+init();
