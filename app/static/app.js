@@ -1075,6 +1075,14 @@ function openSettingsModal() {
   if (!ui.settingsModal) return;
   ui.settingsModal.classList.remove("hidden");
   ui.settingsModal.setAttribute("aria-hidden", "false");
+
+  const panel = qs('[role="dialog"]', ui.settingsModal) || ui.settingsModal.firstElementChild;
+  if (panel) {
+    panel.style.left = "50%";
+    panel.style.top = "50%";
+    panel.style.transform = "translate(-50%, -50%)";
+  }
+
   populateModelSelect();
 }
 
@@ -1082,6 +1090,13 @@ function closeSettingsModal() {
   if (!ui.settingsModal) return;
   ui.settingsModal.classList.add("hidden");
   ui.settingsModal.setAttribute("aria-hidden", "true");
+
+  const panel = qs('[role="dialog"]', ui.settingsModal) || ui.settingsModal.firstElementChild;
+  if (panel) {
+    panel.style.left = "";
+    panel.style.top = "";
+    panel.style.transform = "";
+  }
 }
 
 function normalizeHexColor(value, fallback) {
